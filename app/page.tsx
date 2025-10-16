@@ -12,7 +12,7 @@ export default function Home() {
           Halaman Login
         </Link>{" "}
         atau langsung buka{" "}
-        <Link href="/(dashboard)" className="underline text-blue-600">
+        <Link href="/dashboard" className="underline text-blue-600">
           Dashboard KPI
         </Link>
         .
