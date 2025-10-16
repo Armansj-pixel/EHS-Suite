@@ -1,9 +1,3 @@
-// 7) lib/auth.ts
-// -----------------
-// Authentication & Role helper utilities for EHS Suite
-// Handles user roles (owner, ehs_manager, supervisor, staff, contractor)
-// and provides guards for protected routes.
-
 import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
@@ -18,33 +12,45 @@ export type UserProfile = {
   active?: boolean;
 };
 
-/**
- * getCurrentUserProfile()
- * Fetch user data + role info from Firestore users/{uid}
- */
 export async function getCurrentUserProfile(): Promise<UserProfile | null> {
   return new Promise((resolve) => {
     onAuthStateChanged(auth, async (user: User | null) => {
       if (!user) return resolve(null);
+
       const ref = doc(db, "users", user.uid);
       const snap = await getDoc(ref);
+
       if (!snap.exists()) {
-        // Jika user belum ada di Firestore, anggap role default = staff
-        resolve({ uid: user.uid, email: user.email || "", role: "staff" });
-      } else {
-        resolve({ uid: user.uid, ...(snap.data() as UserProfile) });
+        // default role jika dokumen user belum ada
+        return resolve({
+          uid: user.uid,
+          email: user.email || "",
+          role: "staff",
+        });
       }
+
+      // Hapus uid dari data Firestore agar tidak duplikat saat merge
+      const raw = snap.data() as Partial<UserProfile>;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { uid: _discard, ...rest } = raw;
+
+      return resolve({
+        uid: user.uid,            // sumber kebenaran uid = dari Auth
+        email: user.email || rest.email,
+        role: (rest.role as Role) ?? "staff",
+        name: rest.name,
+        dept: rest.dept,
+        active: rest.active,
+      });
     });
   });
 }
 
-/** Role-based guard */
 export function hasRole(user: UserProfile | null, allowed: Role[]): boolean {
   if (!user) return false;
   return allowed.includes(user.role);
 }
 
-/** Simple route protection for client pages */
 export function redirectIfUnauthorized(user: UserProfile | null, allowed: Role[]) {
   if (!user) {
     window.location.href = "/(auth)/login";
@@ -55,18 +61,3 @@ export function redirectIfUnauthorized(user: UserProfile | null, allowed: Role[]
     window.location.href = "/";
   }
 }
-
-/**
- * 📘 Contoh penggunaan di halaman client:
- * 
- * import { useEffect, useState } from "react";
- * import { getCurrentUserProfile, redirectIfUnauthorized } from "@/lib/auth";
- * 
- * const [user, setUser] = useState<UserProfile|null>(null);
- * useEffect(() => {
- *   getCurrentUserProfile().then(u => {
- *     setUser(u);
- *     redirectIfUnauthorized(u, ["owner", "ehs_manager"]);
- *   });
- * }, []);
- */
