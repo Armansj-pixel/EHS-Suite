@@ -1,5 +1,5 @@
+// lib/firestore.ts
 // Reusable Firestore CRUD helpers (typed) + pagination + batch utils
-// Drop this file at /lib/firestore.ts
 
 import {
   addDoc,
@@ -8,7 +8,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  getFirestore,
   orderBy,
   limit,
   query,
@@ -40,7 +39,11 @@ export async function createDoc<T extends DocumentData>(path: string, data: T) {
   return ref.id;
 }
 
-export async function setDocMerge<T extends DocumentData>(path: string, id: string, data: Partial<T>) {
+export async function setDocMerge<T extends DocumentData>(
+  path: string,
+  id: string,
+  data: Partial<T>
+) {
   await setDoc(
     docRef(path, id),
     {
@@ -52,7 +55,11 @@ export async function setDocMerge<T extends DocumentData>(path: string, id: stri
   );
 }
 
-export async function updateDocById<T extends DocumentData>(path: string, id: string, data: Partial<T>) {
+export async function updateDocById<T extends DocumentData>(
+  path: string,
+  id: string,
+  data: Partial<T>
+) {
   await updateDoc(docRef(path, id), { ...data, updatedAt: serverTimestamp() });
 }
 
@@ -60,13 +67,19 @@ export async function deleteDocById(path: string, id: string) {
   await deleteDoc(docRef(path, id));
 }
 
-export async function getById<T extends DocumentData>(path: string, id: string): Promise<DocWithId<T> | null> {
+export async function getById<T extends DocumentData>(
+  path: string,
+  id: string
+): Promise<DocWithId<T> | null> {
   const snap = await getDoc(docRef(path, id));
   if (!snap.exists()) return null;
   return { id: snap.id, ...(snap.data() as T) };
 }
 
-export async function listDocs<T extends DocumentData>(path: string, constraints: QueryConstraint[] = []): Promise<DocWithId<T>[]> {
+export async function listDocs<T extends DocumentData>(
+  path: string,
+  constraints: QueryConstraint[] = []
+): Promise<DocWithId<T>[]> {
   const q = query(colRef(path), ...constraints);
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as T) }));
@@ -93,14 +106,24 @@ export async function listPaginated<T extends DocumentData>(
 }
 
 // ————— Counter helper (e.g., daily order number) ————— //
-export async function incrementCounter(path: string, id: string, field = "value", step = 1) {
+export async function incrementCounter(
+  path: string,
+  id: string,
+  field = "value",
+  step = 1
+) {
   await setDoc(docRef(path, id), { [field]: increment(step) }, { merge: true });
 }
 
 // ————— Batch utils ————— //
-export async function batchUpdate(path: string, updates: { id: string; data: DocumentData }[]) {
+export async function batchUpdate(
+  path: string,
+  updates: { id: string; data: DocumentData }[]
+) {
   const batch = writeBatch(db);
-  for (const u of updates) batch.update(docRef(path, u.id), { ...u.data, updatedAt: serverTimestamp() });
+  for (const u of updates) {
+    batch.update(docRef(path, u.id), { ...u.data, updatedAt: serverTimestamp() });
+  }
   await batch.commit();
 }
 
@@ -111,7 +134,6 @@ export async function batchDelete(path: string, ids: string[]) {
 }
 
 // ————— Example typed usage ————— //
-// Types you can reuse around the app
 export type HIRARC = {
   area: string;
   jobTask: string;
@@ -129,9 +151,9 @@ export type HIRARC = {
 export const createHIRARC = (data: Omit<HIRARC, "createdAt" | "updatedAt">) =>
   createDoc<HIRARC>("hirarc", data as HIRARC);
 
-// List HIRARC (open only)
+// List HIRARC (Open only)  ✅ FIXED
 export const listOpenHIRARC = () =>
-  listDocs<HIRARC>(["hirarc"], [
+  listDocs<HIRARC>("hirarc", [
     where("status", "==", "Open"),
     orderBy("createdAt", "desc"),
     limit(50),
