@@ -53,7 +53,7 @@ export function hasRole(user: UserProfile | null, allowed: Role[]): boolean {
 
 export function redirectIfUnauthorized(user: UserProfile | null, allowed: Role[]) {
   if (!user) {
-    window.location.href = "/(auth)/login";
+    window.location.href = "/login";
     return;
   }
   if (!allowed.includes(user.role)) {
