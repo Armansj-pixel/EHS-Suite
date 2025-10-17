@@ -8,7 +8,7 @@ export default function Home() {
         Selamat datang di <strong>EHS Suite</strong> — sistem digital untuk
         manajemen K3 & SMK3. <br />
         Silakan lanjut ke{" "}
-        <Link href="/(auth)/login" className="underline text-blue-600">
+        <Link href="/login" className="underline text-blue-600">
           Halaman Login
         </Link>{" "}
         atau langsung buka{" "}
