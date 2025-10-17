@@ -4,6 +4,7 @@ import { useUserProfile } from "@/lib/useUserProfile";
 
 export default function ProfilePage() {
   const { ready, uid, profile, error } = useUserProfile();
+
   return (
     <AuthGate>
       <div className="p-6 space-y-2">
