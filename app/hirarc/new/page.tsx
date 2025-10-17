@@ -20,7 +20,7 @@ export default function NewHIRARCPage() {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) {
         // belum login → arahin ke login
-        router.push("/(auth)/login");
+        router.push("/login");
       } else {
         setUid(u.uid);
       }
