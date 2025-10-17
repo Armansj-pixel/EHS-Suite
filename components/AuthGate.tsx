@@ -5,7 +5,7 @@ import { auth } from "@/lib/firebase";
 
 export default function AuthGate({
   children,
-  redirectTo = "/(auth)/login",
+  redirectTo = "/login",
 }: {
   children: React.ReactNode;
   redirectTo?: string;
@@ -21,20 +21,16 @@ export default function AuthGate({
     return () => unsub();
   }, []);
 
-  // Selama inisialisasi, JANGAN redirect—tampilkan loader saja
   if (!ready) {
     return (
-      <div className="min-h-dvh flex items-center justify-center text-neutral-500">
-        Memuat sesi...
+      <div className="min-h-screen flex items-center justify-center text-neutral-500">
+        Memuat sesi pengguna...
       </div>
     );
   }
 
-  // Setelah siap dan user memang null → baru redirect
   if (!user) {
-    if (typeof window !== "undefined") {
-      window.location.href = redirectTo;
-    }
+    if (typeof window !== "undefined") window.location.href = redirectTo;
     return null;
   }
 
