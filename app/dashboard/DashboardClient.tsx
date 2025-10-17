@@ -1,7 +1,14 @@
-// app/dashboard/DashboardClient.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import { db } from "@/lib/firebase";
+import {
+  collection,
+  getCountFromServer,
+  query,
+  where,
+  // orderBy, limit // (opsional kalau nanti mau filter periode)
+} from "firebase/firestore";
 
 type KPIData = {
   inspections: number;
@@ -34,6 +41,13 @@ function KpiCard({
   );
 }
 
+async function count(col: string, filter?: { field: string; value: any }) {
+  const ref = collection(db, col);
+  const q = filter ? query(ref, where(filter.field, "==", filter.value)) : ref;
+  const snap = await getCountFromServer(q);
+  return snap.data().count ?? 0;
+}
+
 export default function DashboardClient() {
   const [kpi, setKpi] = useState<KPIData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,11 +57,24 @@ export default function DashboardClient() {
     try {
       setLoading(true);
       setErr(null);
-      const res = await fetch("/api/kpi", { cache: "no-store" });
-      if (!res.ok) throw new Error("Gagal memuat KPI");
-      const data: KPIData = await res.json();
-      setKpi(data);
+
+      // Ambil count langsung dari Firestore (pakai auth user yang sedang login)
+      const [inspections, hazards, hirarcOpen, ptwActive] = await Promise.all([
+        count("inspections"),
+        count("hazard_reports"),
+        count("hirarc", { field: "status", value: "Open" }),
+        count("ptw", { field: "status", value: "Approved" }),
+      ]);
+
+      setKpi({
+        inspections,
+        hazards,
+        hirarcOpen,
+        ptwActive,
+        updatedAt: Date.now(),
+      });
     } catch (e: any) {
+      console.error(e);
       setErr(e?.message ?? "Gagal memuat KPI");
     } finally {
       setLoading(false);
