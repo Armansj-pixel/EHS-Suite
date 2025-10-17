@@ -3,7 +3,16 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
-import type { UserProfile } from "./users";
+
+export type Role = "owner" | "ehs_manager" | "supervisor" | "staff" | "contractor";
+export type UserProfile = {
+  uid: string;
+  name?: string;
+  email?: string;
+  role: Role;
+  dept?: string;
+  active?: boolean;
+};
 
 export function useUserProfile() {
   const [ready, setReady] = useState(false);
@@ -14,17 +23,45 @@ export function useUserProfile() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       try {
-        if (!u) { setUid(null); setProfile(null); setReady(true); return; }
+        if (!u) {
+          setUid(null);
+          setProfile(null);
+          setReady(true);
+          return;
+        }
+
         setUid(u.uid);
+
         const ref = doc(db, "users", u.uid);
         const snap = await getDoc(ref);
-        setProfile(snap.exists() ? ({ uid: u.uid, ...(snap.data() as UserProfile) }) : null);
+
+        if (!snap.exists()) {
+          // Jika dokumen profil belum ada, tetap kembalikan minimal info dari Auth
+          setProfile({
+            uid: u.uid,
+            email: u.email ?? "",
+            role: "staff",
+          });
+        } else {
+          // Buang `uid` dari Firestore sebelum merge untuk hindari duplikasi
+          const raw = snap.data() as Partial<UserProfile>;
+          const { uid: _discard, ...rest } = raw;
+          setProfile({
+            uid: u.uid, // sumber kebenaran uid = dari Auth
+            email: u.email ?? rest.email,
+            role: (rest.role as Role) ?? "staff",
+            name: rest.name,
+            dept: rest.dept,
+            active: rest.active,
+          });
+        }
       } catch (e: any) {
         setError(e?.message ?? "Failed to load profile");
       } finally {
         setReady(true);
       }
     });
+
     return () => unsub();
   }, []);
 
