@@ -1,6 +1,8 @@
-import { auth, db } from "@/lib/firebase";
+"use client";
+import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 export type Role = "owner" | "ehs_manager" | "supervisor" | "staff" | "contractor";
 export type UserProfile = {
@@ -10,49 +12,51 @@ export type UserProfile = {
   role: Role;
   dept?: string;
   active?: boolean;
-  createdAt?: any;
-  updatedAt?: any;
 };
 
-/** Pastikan users/{uid} ada; jika belum, buat default profile */
-export async function ensureUserProfile(defaults?: Partial<UserProfile>) {
-  return new Promise<UserProfile | null>((resolve) => {
-    onAuthStateChanged(auth, async (u) => {
-      if (!u) return resolve(null);
+export function useUserProfile() {
+  const [ready, setReady] = useState(false);
+  const [uid, setUid] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-      const ref = doc(db, "users", u.uid);
-      const snap = await getDoc(ref);
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      try {
+        if (!u) {
+          setUid(null);
+          setProfile(null);
+          setReady(true);
+          return;
+        }
+        setUid(u.uid);
 
-      if (!snap.exists()) {
-        const profile: UserProfile = {
-          uid: u.uid,
-          email: u.email ?? "",
-          name: u.displayName ?? "",
-          role: (defaults?.role as Role) ?? "ehs_manager",
-          dept: defaults?.dept ?? "Production",
-          active: true,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
-        await setDoc(ref, profile);
-        return resolve(profile);
-      } else {
-        // ⚠️ Hapus uid dari data Firestore sebelum merge
-        const raw = snap.data() as Partial<UserProfile>;
-        const { uid: _discard, ...rest } = raw;
+        const ref = doc(db, "users", u.uid);
+        const snap = await getDoc(ref);
 
-        const merged: UserProfile = {
-          uid: u.uid, // sumber kebenaran uid = dari Auth
-          email: u.email ?? rest.email,
-          name: rest.name,
-          role: (rest.role as Role) ?? "staff",
-          dept: rest.dept,
-          active: rest.active ?? true,
-          createdAt: rest.createdAt,
-          updatedAt: rest.updatedAt,
-        };
-        return resolve(merged);
+        if (!snap.exists()) {
+          // fallback minimal dari Auth kalau dokumen belum ada
+          setProfile({ uid: u.uid, email: u.email ?? "", role: "staff" });
+        } else {
+          const raw = snap.data() as Partial<UserProfile>;
+          const { uid: _discard, ...rest } = raw;
+          setProfile({
+            uid: u.uid, // kebenaran UID dari Auth
+            email: u.email ?? rest.email,
+            role: (rest.role as Role) ?? "staff",
+            name: rest.name,
+            dept: rest.dept,
+            active: rest.active,
+          });
+        }
+      } catch (e: any) {
+        setError(e?.message ?? "Failed to load profile");
+      } finally {
+        setReady(true);
       }
     });
-  });
+    return () => unsub();
+  }, []);
+
+  return { ready, uid, profile, error };
 }
