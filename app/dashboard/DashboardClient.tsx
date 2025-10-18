@@ -2,6 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  Timestamp,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 type KpiData = {
   period: { from: string; to: string };
@@ -35,8 +43,8 @@ export default function DashboardClient() {
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    if (from) p.set("from", new Date(from).toISOString());
-    if (to) p.set("to", new Date(to).toISOString());
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
     return p.toString();
   }, [from, to]);
 
@@ -44,29 +52,113 @@ export default function DashboardClient() {
     try {
       setLoading(true);
       setErr(null);
-      const res = await fetch(`/api/kpi${qs ? "?" + qs : ""}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text());
-      const json = (await res.json()) as KpiData;
-      setData(json);
+
+      // periode default: 6 bulan terakhir
+      const toDate = to ? new Date(to) : new Date();
+      const fromDate = from
+        ? new Date(from)
+        : new Date(toDate.getFullYear(), toDate.getMonth() - 5, 1);
+
+      const fromTs = Timestamp.fromDate(fromDate);
+      const toTs = Timestamp.fromDate(
+        new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate(), 23, 59, 59)
+      );
+
+      const hazardsRef = collection(db, "hazard_reports");
+      const inspectionsRef = collection(db, "inspections");
+
+      const [hazardsSnap, inspectionsSnap] = await Promise.all([
+        getDocs(query(hazardsRef, where("createdAt", ">=", fromTs), where("createdAt", "<=", toTs))),
+        getDocs(query(inspectionsRef, where("createdAt", ">=", fromTs), where("createdAt", "<=", toTs))),
+      ]);
+
+      const fmtMonth = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const buckets = new Map<string, { hazards: number; nearmiss: number; inspections: number }>();
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(toDate.getFullYear(), toDate.getMonth() - i, 1);
+        buckets.set(fmtMonth(d), { hazards: 0, nearmiss: 0, inspections: 0 });
+      }
+
+      let hazards = 0;
+      let hazardsOpen = 0;
+      let hazardsClosed = 0;
+      let nearmiss = 0;
+      let inspections = 0;
+      let recent: KpiData["recentActivities"] = [];
+
+      hazardsSnap.forEach((docu) => {
+        const d: any = docu.data();
+        const created: Date = d.createdAt?.toDate?.() ?? new Date();
+        const key = fmtMonth(new Date(created.getFullYear(), created.getMonth(), 1));
+        const typeStr = (d.type ?? d.category ?? "").toLowerCase();
+        const isNearMiss = typeStr.includes("near");
+
+        if (!buckets.has(key)) buckets.set(key, { hazards: 0, nearmiss: 0, inspections: 0 });
+        if (isNearMiss) {
+          nearmiss++;
+          buckets.get(key)!.nearmiss++;
+        } else {
+          hazards++;
+          buckets.get(key)!.hazards++;
+        }
+
+        const status = d.status ?? "Open";
+        if (status === "Open") hazardsOpen++;
+        if (status === "Closed") hazardsClosed++;
+
+        recent.push({
+          type: isNearMiss ? "nearmiss" : "hazard",
+          id: docu.id,
+          title: d.title ?? d.description ?? "Hazard Report",
+          createdAt: created.toISOString(),
+          status,
+        });
+      });
+
+      inspectionsSnap.forEach((docu) => {
+        const d: any = docu.data();
+        const created: Date = d.createdAt?.toDate?.() ?? new Date();
+        const key = fmtMonth(new Date(created.getFullYear(), created.getMonth(), 1));
+        if (!buckets.has(key)) buckets.set(key, { hazards: 0, nearmiss: 0, inspections: 0 });
+        buckets.get(key)!.inspections++;
+        inspections++;
+        recent.push({
+          type: "inspection",
+          id: docu.id,
+          title: d.area ?? d.title ?? "Inspection",
+          createdAt: created.toISOString(),
+        });
+      });
+
+      recent.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      recent = recent.slice(0, 10);
+
+      const trendMonthly = Array.from(buckets.entries())
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([month, v]) => ({ month, ...v }));
+
+      setData({
+        period: { from: fromDate.toISOString(), to: toDate.toISOString() },
+        totals: { hazards, hazardsOpen, hazardsClosed, nearmiss, inspections },
+        trendMonthly,
+        hazardsByStatus: [
+          { name: "Open", value: hazardsOpen },
+          { name: "Closed", value: hazardsClosed },
+        ],
+        recentActivities: recent,
+      });
     } catch (e: any) {
       console.error(e);
-      setErr("Gagal memuat KPI");
+      setErr(e?.message ?? "Gagal memuat KPI");
     } finally {
       setLoading(false);
     }
   }
 
-  // initial load
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // auto-refresh ringan tiap 30 detik
-  useEffect(() => {
-    const iv = setInterval(() => load(), 30_000);
-    return () => clearInterval(iv);
-  }, [qs]);
 
   const onApply = () => {
     const p = new URLSearchParams();
@@ -82,40 +174,25 @@ export default function DashboardClient() {
       <div className="bg-white border rounded-xl p-4 flex flex-col md:flex-row gap-3 md:items-end">
         <div>
           <label className="text-sm text-gray-600">Dari</label>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="mt-1 border rounded px-3 py-2 text-sm"
-          />
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="mt-1 border rounded px-3 py-2 text-sm" />
         </div>
         <div>
           <label className="text-sm text-gray-600">Sampai</label>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="mt-1 border rounded px-3 py-2 text-sm"
-          />
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="mt-1 border rounded px-3 py-2 text-sm" />
         </div>
         <div className="md:ml-auto">
-          <button
-            onClick={onApply}
-            className="px-4 py-2 rounded bg-gray-900 text-white text-sm hover:bg-gray-800"
-            disabled={loading}
-          >
+          <button onClick={onApply} className="px-4 py-2 rounded bg-gray-900 text-white text-sm hover:bg-gray-800" disabled={loading}>
             {loading ? "Memuat…" : "Terapkan"}
           </button>
         </div>
       </div>
 
-      {/* Info status */}
       {loading && <div className="text-sm text-gray-500">Memuat KPI…</div>}
       {err && <div className="text-sm text-red-600">⚠ {err}</div>}
 
-      {/* Kartu KPI */}
       {data && (
         <>
+          {/* Kartu KPI */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <KpiCard title="Hazard" value={data.totals.hazards} />
             <KpiCard title="Open" value={data.totals.hazardsOpen} />
@@ -124,7 +201,7 @@ export default function DashboardClient() {
             <KpiCard title="Inspeksi" value={data.totals.inspections} />
           </div>
 
-          {/* Ringkasan Tren (tanpa grafik) */}
+          {/* Tren ringkas */}
           <div className="bg-white border rounded-xl p-4">
             <h3 className="font-medium text-gray-800 mb-2">Tren 6 Bulan (Ringkas)</h3>
             <div className="overflow-x-auto">
@@ -149,21 +226,13 @@ export default function DashboardClient() {
                 </tbody>
               </table>
             </div>
+            <div className="text-xs text-gray-500 mt-2">
+              Periode: {new Date(data.period.from).toLocaleDateString("id-ID")} —{" "}
+              {new Date(data.period.to).toLocaleDateString("id-ID")}
+            </div>
           </div>
 
-          {/* Komposisi Status Hazard (tanpa grafik) */}
-          <div className="bg-white border rounded-xl p-4">
-            <h3 className="font-medium text-gray-800 mb-2">Status Hazard</h3>
-            <ul className="text-sm text-gray-700 list-disc pl-5">
-              {data.hazardsByStatus.map((s) => (
-                <li key={s.name}>
-                  {s.name}: <span className="font-semibold">{s.value}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Aktivitas Terbaru */}
+          {/* Aktivitas terbaru */}
           <div className="bg-white border rounded-xl p-4">
             <h3 className="font-medium text-gray-800 mb-3">Aktivitas Terbaru</h3>
             {data.recentActivities.length === 0 ? (
@@ -182,9 +251,7 @@ export default function DashboardClient() {
                   <tbody>
                     {data.recentActivities.map((r) => (
                       <tr key={`${r.type}-${r.id}`} className="border-b last:border-none">
-                        <td className="py-2 pr-4">
-                          {new Date(r.createdAt).toLocaleString("id-ID")}
-                        </td>
+                        <td className="py-2 pr-4">{new Date(r.createdAt).toLocaleString("id-ID")}</td>
                         <td className="py-2 pr-4 capitalize">{r.type}</td>
                         <td className="py-2 pr-4">{r.title}</td>
                         <td className="py-2 pr-4">{r.status ?? "-"}</td>
@@ -194,11 +261,6 @@ export default function DashboardClient() {
                 </table>
               </div>
             )}
-            <div className="text-xs text-gray-500 mt-2">
-              Periode:{" "}
-              {new Date(data.period.from).toLocaleDateString("id-ID")} —{" "}
-              {new Date(data.period.to).toLocaleDateString("id-ID")}
-            </div>
           </div>
         </>
       )}
