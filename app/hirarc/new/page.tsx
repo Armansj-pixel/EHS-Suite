@@ -1,140 +1,192 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { createHIRARC } from "@/lib/firestore";
-import { auth } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import { db } from "@/lib/firebase";
+import { useUserProfile } from "@/lib/useUserProfile";
 
-const RISK = ["Low", "Medium", "High"] as const;
-const STATUS = ["Open", "In Progress", "Closed"] as const;
+type RiskLevel = "Low" | "Medium" | "High";
+type HStatus = "Open" | "Closed";
+
+function toRiskLevel(score: number): RiskLevel {
+  if (score >= 15) return "High";     // 15–25
+  if (score >= 6) return "Medium";    // 6–14
+  return "Low";                       // 1–5
+}
 
 export default function NewHIRARCPage() {
   const router = useRouter();
-  const [uid, setUid] = useState<string | null>(null);
+  const { profile } = useUserProfile();
+
+  const [activity, setActivity] = useState("");
+  const [hazard, setHazard] = useState("");
+  const [consequence, setConsequence] = useState("");
+  const [likelihood, setLikelihood] = useState(3);
+  const [severity, setSeverity] = useState(3);
+  const [existingControls, setExistingControls] = useState("");
+  const [additionalControls, setAdditionalControls] = useState("");
+  const [owner, setOwner] = useState(profile?.name || "");
+  const [dueDate, setDueDate] = useState<string>("");
+  const [status, setStatus] = useState<HStatus>("Open");
+
   const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-  // pastikan user login; ambil UID untuk owner
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      if (!u) {
-        // belum login → arahin ke login
-        router.push("/login");
-      } else {
-        setUid(u.uid);
-      }
-    });
-    return () => unsub();
-  }, [router]);
+  const riskScore = useMemo(() => likelihood * severity, [likelihood, severity]);
+  const riskLevel: RiskLevel = useMemo(() => toRiskLevel(riskScore), [riskScore]);
 
-  const [form, setForm] = useState({
-    area: "",
-    jobTask: "",
-    hazards: "",
-    controls: "",
-    riskBefore: "Medium" as (typeof RISK)[number],
-    riskAfter: "Low" as (typeof RISK)[number],
-    status: "Open" as (typeof STATUS)[number],
-  });
-
-  function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
-    setForm((f) => ({ ...f, [k]: v }));
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!uid) return; // guard: belum login
-
-    // validasi minimal
-    if (!form.area.trim())  { setError("Area wajib diisi."); return; }
-    if (!form.jobTask.trim()){ setError("Job Task wajib diisi."); return; }
-
-    setLoading(true); setError(null);
+  async function submit() {
+    setErr(null);
+    if (!activity.trim()) return setErr("Activity wajib diisi.");
+    if (!hazard.trim()) return setErr("Hazard wajib diisi.");
+    if (!consequence.trim()) return setErr("Consequence wajib diisi.");
+    setLoading(true);
     try {
-      const hazards = form.hazards.split(",").map(s => s.trim()).filter(Boolean);
-      const controls = form.controls.split(",").map(s => s.trim()).filter(Boolean);
+      const uid = getAuth().currentUser?.uid;
+      if (!uid) throw new Error("Anda belum login.");
 
-      await createHIRARC({
-        area: form.area.trim(),
-        jobTask: form.jobTask.trim(),
-        hazards,
-        controls,
-        riskBefore: form.riskBefore,
-        riskAfter: form.riskAfter,
-        owner: uid,               // ← otomatis isi UID
-        status: form.status,
+      const due = dueDate ? new Date(dueDate) : null;
+
+      await addDoc(collection(db, "hirarc"), {
+        activity: activity.trim(),
+        hazard: hazard.trim(),
+        consequence: consequence.trim(),
+        likelihood,
+        severity,
+        riskScore,
+        riskLevel,                 // Low / Medium / High
+        existingControls: existingControls.trim(),
+        additionalControls: additionalControls.trim(),
+        owner: owner.trim(),
+        dueDate: due,
+        status,                    // Open / Closed
+        // metadata
+        createdBy: uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
-      alert("HIRARC berhasil disimpan.");
       router.push("/hirarc");
-    } catch (err: any) {
-      setError(err?.message ?? "Gagal menyimpan HIRARC.");
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || "Gagal menyimpan HIRARC.");
     } finally {
       setLoading(false);
     }
   }
 
+  const badge =
+    riskLevel === "High"
+      ? "bg-red-100 text-red-700"
+      : riskLevel === "Medium"
+      ? "bg-amber-100 text-amber-700"
+      : "bg-emerald-100 text-emerald-700";
+
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">New HIRARC</h1>
+    <div className="space-y-5 max-w-3xl">
+      <h1 className="text-xl font-semibold">Tambah HIRARC</h1>
+      {err && <div className="text-sm text-red-600">⚠ {err}</div>}
 
-      <form onSubmit={onSubmit} className="space-y-4 bg-white p-5 rounded-2xl border shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="bg-white border rounded-xl p-4 space-y-3">
+        <div>
+          <label className="text-sm text-gray-600">Activity/Task</label>
+          <input className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                 placeholder="Contoh: Winding coil tembaga"
+                 value={activity} onChange={e=>setActivity(e.target.value)} />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-neutral-600">Area</label>
-            <input className="input" value={form.area} onChange={(e)=>set("area", e.target.value)} placeholder="Winding / Assembly" required />
+            <label className="text-sm text-gray-600">Hazard</label>
+            <input className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                   placeholder="Contoh: Tumpahan oli, kabel melintang, guarding terbuka"
+                   value={hazard} onChange={e=>setHazard(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm text-neutral-600">Job Task</label>
-            <input className="input" value={form.jobTask} onChange={(e)=>set("jobTask", e.target.value)} placeholder="Coil Winding / Brazing / LOTO" required />
+            <label className="text-sm text-gray-600">Consequence</label>
+            <input className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                   placeholder="Contoh: Tergelincir, cedera, terbakar"
+                   value={consequence} onChange={e=>setConsequence(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Matrix inputs */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="text-sm text-gray-600">Likelihood (1–5)</label>
+            <input type="number" min={1} max={5}
+                   className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                   value={likelihood} onChange={e=>setLikelihood(Number(e.target.value))}/>
+          </div>
+          <div>
+            <label className="text-sm text-gray-600">Severity (1–5)</label>
+            <input type="number" min={1} max={5}
+                   className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                   value={severity} onChange={e=>setSeverity(Number(e.target.value))}/>
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="w-full">
+              <div className="text-sm text-gray-600">Risk Score</div>
+              <div className="mt-1 px-3 py-2 border rounded text-sm bg-gray-50">{riskScore}</div>
+            </div>
+            <div className="w-full">
+              <div className="text-sm text-gray-600">Risk Level</div>
+              <div className={`mt-1 px-3 py-2 border rounded text-sm ${badge}`}>{riskLevel}</div>
+            </div>
           </div>
         </div>
 
         <div>
-          <label className="text-sm text-neutral-600">Hazards (pisahkan dengan koma)</label>
-          <input className="input" value={form.hazards} onChange={(e)=>set("hazards", e.target.value)} placeholder="Pinch point, Noise, Dust" />
+          <label className="text-sm text-gray-600">Existing Controls</label>
+          <textarea className="mt-1 border rounded px-3 py-2 w-full text-sm min-h-20"
+                    placeholder="Kontrol yang sudah ada (engineering, admin, signage, housekeeping)"
+                    value={existingControls} onChange={e=>setExistingControls(e.target.value)} />
         </div>
 
         <div>
-          <label className="text-sm text-neutral-600">Controls (pisahkan dengan koma)</label>
-          <input className="input" value={form.controls} onChange={(e)=>set("controls", e.target.value)} placeholder="Guard, Gloves, Earplug, SOP" />
+          <label className="text-sm text-gray-600">Additional Controls (Rencana)</label>
+          <textarea className="mt-1 border rounded px-3 py-2 w-full text-sm min-h-20"
+                    placeholder="Kontrol tambahan yang diusulkan (guarding, SOP, training, APD, dsb.)"
+                    value={additionalControls} onChange={e=>setAdditionalControls(e.target.value)} />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <label className="text-sm text-neutral-600">Risk Before</label>
-            <select className="input" value={form.riskBefore} onChange={(e)=>set("riskBefore", e.target.value as any)}>
-              {RISK.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+            <label className="text-sm text-gray-600">PIC / Owner</label>
+            <input className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                   placeholder="Nama penanggung jawab"
+                   value={owner} onChange={e=>setOwner(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm text-neutral-600">Risk After</label>
-            <select className="input" value={form.riskAfter} onChange={(e)=>set("riskAfter", e.target.value as any)}>
-              {RISK.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+            <label className="text-sm text-gray-600">Due Date</label>
+            <input type="date" className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                   value={dueDate} onChange={e=>setDueDate(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm text-neutral-600">Status</label>
-            <select className="input" value={form.status} onChange={(e)=>set("status", e.target.value as any)}>
-              {STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+            <label className="text-sm text-gray-600">Status</label>
+            <select className="mt-1 border rounded px-3 py-2 w-full text-sm"
+                    value={status} onChange={e=>setStatus(e.target.value as HStatus)}>
+              <option value="Open">Open</option>
+              <option value="Closed">Closed</option>
             </select>
           </div>
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        <div className="flex items-center gap-3">
-          <button className="btn" disabled={loading || !uid}>
-            {loading ? "Saving..." : "Save HIRARC"}
+        <div className="flex gap-2 pt-2">
+          <button onClick={submit} disabled={loading}
+                  className="px-4 py-2 bg-gray-900 text-white rounded text-sm hover:bg-gray-800 disabled:opacity-60">
+            {loading ? "Menyimpan…" : "Simpan"}
           </button>
-          <button type="button" className="px-4 py-2 rounded-lg border" onClick={()=>history.back()}>Cancel</button>
+          <a href="/hirarc" className="px-4 py-2 border rounded text-sm">Batal</a>
         </div>
-      </form>
+      </div>
 
-      <p className="text-xs text-neutral-500">
-        (Owner otomatis = UID user yang login. Nanti bisa kita tampilkan nama dari koleksi <code>users</code>.)
-      </p>
+      <div className="text-xs text-gray-500">
+        Skala contoh: Likelihood &amp; Severity = 1 (sangat rendah) … 5 (sangat tinggi).  
+        Risk Level: 1–5 Low, 6–14 Medium, 15–25 High.
+      </div>
     </div>
   );
 }
