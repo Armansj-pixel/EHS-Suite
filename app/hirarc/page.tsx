@@ -1,141 +1,220 @@
 "use client";
 
-import AuthGate from "@/components/AuthGate";
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { listDocs, type HIRARC, type DocWithId } from "@/lib/firestore";
-import { where, orderBy, limit, Timestamp } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { db } from "@/lib/firebase";
+import {
+  collection, getDocs, query, orderBy, limit, startAfter, updateDoc, doc
+} from "firebase/firestore";
+import { useUserProfile } from "@/lib/useUserProfile";
+import { getAuth } from "firebase/auth";
 
-const STATUS = ["All", "Open", "In Progress", "Closed"] as const;
-type StatusFilter = typeof STATUS[number];
-type HRow = DocWithId<HIRARC> & { createdAt?: Timestamp };
+type HDoc = {
+  id: string;
+  activity?: string;
+  hazard?: string;
+  consequence?: string;
+  likelihood?: number;
+  severity?: number;
+  riskScore?: number;
+  riskLevel?: "Low" | "Medium" | "High";
+  owner?: string;
+  dueDate?: any;
+  status: "Open" | "Closed";
+  createdBy?: string;
+  createdAt?: any;
+  updatedAt?: any;
+};
+
+const PAGE_SIZE = 20;
 
 export default function HIRARCListPage() {
-  const [items, setItems] = useState<HRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<StatusFilter>("All");
-  const [q, setQ] = useState("");
+  const { profile } = useUserProfile();
+  const [items, setItems] = useState<HDoc[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [last, setLast] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
 
-  async function fetchData(s: StatusFilter) {
+  const uid = getAuth().currentUser?.uid || null;
+  const myRole = profile?.role || "staff";
+  const isManager = ["owner", "ehs_manager", "admin"].includes(myRole);
+
+  async function loadFirst() {
     setLoading(true);
-    setError(null);
+    setErr(null);
     try {
-      const constraints =
-        s === "All"
-          ? [orderBy("createdAt", "desc"), limit(50)]
-          : [where("status", "==", s), orderBy("createdAt", "desc"), limit(50)];
-      const data = await listDocs<HIRARC>("hirarc", constraints);
-      setItems(data as HRow[]);
+      const qRef = query(
+        collection(db, "hirarc"),
+        orderBy("createdAt", "desc"),
+        limit(PAGE_SIZE)
+      );
+      const snap = await getDocs(qRef);
+      const arr: HDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      setItems(arr);
+      setLast(snap.docs[snap.docs.length - 1] || null);
+      setHasMore(snap.docs.length === PAGE_SIZE);
     } catch (e: any) {
-      setError(e?.message ?? "Gagal memuat HIRARC");
+      console.error(e);
+      setErr(e?.message || "Gagal memuat HIRARC.");
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    fetchData(status);
-  }, [status]);
+  async function loadMore() {
+    if (!last) return;
+    setLoadingMore(true);
+    setErr(null);
+    try {
+      const qRef = query(
+        collection(db, "hirarc"),
+        orderBy("createdAt", "desc"),
+        startAfter(last),
+        limit(PAGE_SIZE)
+      );
+      const snap = await getDocs(qRef);
+      const arr: HDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      setItems((prev) => [...prev, ...arr]);
+      setLast(snap.docs[snap.docs.length - 1] || null);
+      setHasMore(snap.docs.length === PAGE_SIZE);
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || "Gagal memuat data tambahan.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (!term) return items;
-    return items.filter(
-      (it) =>
-        it.area?.toLowerCase().includes(term) ||
-        it.jobTask?.toLowerCase().includes(term) ||
-        it.hazards?.join(" ").toLowerCase().includes(term)
-    );
-  }, [items, q]);
+  useEffect(() => {
+    loadFirst();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function closeItem(id: string) {
+    try {
+      await updateDoc(doc(db, "hirarc", id), {
+        status: "Closed",
+        updatedAt: new Date(),
+      });
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "Closed" } : it)));
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || "Gagal menutup item (cek izin / rules).");
+    }
+  }
+
+  function canClose(it: HDoc) {
+    if (it.status !== "Open") return false;
+    if (!uid) return false;
+    return isManager || it.createdBy === uid;
+  }
+
+  const fmtDate = (ts?: any) => {
+    const d = ts?.toDate?.() instanceof Date ? ts.toDate() : ts instanceof Date ? ts : null;
+    return d ? d.toLocaleDateString("id-ID") : "-";
+  };
+
+  const riskBadge = (level?: string) =>
+    "px-2 py-1 rounded text-xs " +
+    (level === "High"
+      ? "bg-red-100 text-red-700"
+      : level === "Medium"
+      ? "bg-amber-100 text-amber-700"
+      : "bg-emerald-100 text-emerald-700");
 
   return (
-    <AuthGate>
-      <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <h1 className="text-2xl font-bold">HIRARC</h1>
-          <div className="flex items-center gap-2">
-            {STATUS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatus(s)}
-                className={`px-3 py-1.5 rounded-full border text-sm ${
-                  status === s
-                    ? "bg-black text-white"
-                    : "bg-white hover:bg-neutral-100"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-            <Link href="/hirarc/new" className="btn">
-              New HIRARC
-            </Link>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <input
-            placeholder="Cari area / task / hazard..."
-            className="input max-w-md"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-          <button onClick={() => fetchData(status)} className="btn">
-            Refresh
-          </button>
-        </div>
-
-        {loading && <p>Loading...</p>}
-        {error && <p className="text-red-600 text-sm">{error}</p>}
-
-        {!loading && filtered.length === 0 && (
-          <p className="text-neutral-500">Belum ada data HIRARC.</p>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((it) => (
-            <div
-              key={it.id}
-              className="rounded-2xl border bg-white p-4 shadow-sm hover:shadow-md transition"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-neutral-500">{it.area}</p>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full border ${
-                    it.status === "Closed"
-                      ? "bg-green-50 text-green-700 border-green-200"
-                      : it.status === "In Progress"
-                      ? "bg-amber-50 text-amber-700 border-amber-200"
-                      : "bg-blue-50 text-blue-700 border-blue-200"
-                  }`}
-                >
-                  {it.status}
-                </span>
-              </div>
-
-              <h3 className="mt-1 text-base font-semibold">{it.jobTask}</h3>
-
-              <div className="mt-2 text-sm">
-                <div>
-                  Risk: <span className="font-medium">{it.riskBefore}</span> →{" "}
-                  <span className="font-medium">{it.riskAfter}</span>
-                </div>
-                {it.hazards?.length ? (
-                  <div className="mt-1 text-neutral-600 truncate">
-                    Hazards: {it.hazards.join(", ")}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="mt-3 text-xs text-neutral-500">
-                {it.createdAt &&
-                  `Created: ${it.createdAt.toDate().toLocaleString()}`}
-              </div>
-            </div>
-          ))}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">HIRARC</h1>
+        <div className="flex gap-2">
+          <Link href="/hirarc/new" className="px-3 py-2 text-sm bg-gray-900 text-white rounded hover:bg-gray-800">
+            + HIRARC
+          </Link>
         </div>
       </div>
-    </AuthGate>
+
+      {err && <div className="text-sm text-red-600">⚠ {err}</div>}
+      {loading && <div className="text-sm text-gray-500">Memuat data…</div>}
+
+      {!loading && items.length === 0 ? (
+        <div className="text-sm text-gray-500">Belum ada data HIRARC.</div>
+      ) : (
+        <div className="overflow-x-auto bg-white border rounded-xl">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-600 border-b">
+                <th className="py-2 px-3">Tanggal</th>
+                <th className="py-2 px-3">Aktivitas</th>
+                <th className="py-2 px-3">Hazard</th>
+                <th className="py-2 px-3">Risk</th>
+                <th className="py-2 px-3">PIC</th>
+                <th className="py-2 px-3">Due</th>
+                <th className="py-2 px-3">Status</th>
+                <th className="py-2 px-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.id} className="border-b last:border-none">
+                  <td className="py-2 px-3 whitespace-nowrap">{fmtDate(it.createdAt)}</td>
+                  <td className="py-2 px-3">
+                    <Link href={`/hirarc/${it.id}`} className="hover:underline">
+                      {it.activity || "-"}
+                    </Link>
+                  </td>
+                  <td className="py-2 px-3">{it.hazard || "-"}</td>
+                  <td className="py-2 px-3">
+                    <span className={riskBadge(it.riskLevel)} title={`Score: ${it.riskScore ?? "-"}`}>
+                      {it.riskLevel || "-"}
+                    </span>
+                  </td>
+                  <td className="py-2 px-3">{it.owner || "-"}</td>
+                  <td className="py-2 px-3">{fmtDate(it.dueDate)}</td>
+                  <td className="py-2 px-3">
+                    <span
+                      className={
+                        "px-2 py-1 rounded text-xs " +
+                        (it.status === "Open" ? "bg-blue-100 text-blue-700" : "bg-gray-200 text-gray-700")
+                      }
+                    >
+                      {it.status}
+                    </span>
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {canClose(it) ? (
+                      <button
+                        className="px-3 py-1.5 text-xs bg-gray-900 text-white rounded hover:bg-gray-800"
+                        onClick={() => closeItem(it.id)}
+                      >
+                        Close
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-400">-</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Load more */}
+          <div className="p-3 flex justify-center">
+            {hasMore ? (
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="px-4 py-2 text-sm border rounded hover:bg-gray-50 disabled:opacity-60"
+              >
+                {loadingMore ? "Memuat…" : "Muat lebih banyak"}
+              </button>
+            ) : (
+              <div className="text-xs text-gray-400">Semua data sudah ditampilkan</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
