@@ -1,62 +1,52 @@
 // lib/kpi.ts
-import { db } from "@/lib/firestore";
-import {
-  collection,
-  getCountFromServer,
-  query,
-  where,
-  Timestamp,
-} from "firebase/firestore";
 
-export type KpiWindow = { from: Date; to: Date };
+import { db } from '@/lib/firestore'; // Pastikan Anda sudah mengimpor Firestore
+import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 
-export type KpiResult = {
-  totalInspections: number;
-  openInspections: number;
-  closedInspections: number;
-  totalHazards: number;
-  openHazards: number;
-  closedHazards: number;
-};
-
-function toTs(d: Date) {
-  return Timestamp.fromDate(d);
+interface KpiWindow {
+  from: Date;
+  to: Date;
 }
 
+interface KpiResult {
+  // Define your result structure here
+  totalRecords: number;
+  success: boolean;
+}
+
+// Fungsi toTs untuk mengonversi Date menjadi timestamp
+const toTs = (date: Date): number => {
+  return date.getTime();
+};
+
 export async function fetchKPI({ from, to }: KpiWindow): Promise<KpiResult> {
+  // Pastikan toTs digunakan setelah deklarasi
   const fromTs = toTs(from);
-  const toTs = toTs(to);
+  const toTsValue = toTs(to);
 
-  // --- Inspections ---
-  const insBase = query(
-    collection(db, "inspections"),
-    where("createdAt", ">=", fromTs),
-    where("createdAt", "<=", toTs)
-  );
-  const [insAllSnap, insOpenSnap, insClosedSnap] = await Promise.all([
-    getCountFromServer(insBase),
-    getCountFromServer(query(insBase, where("status", "in", ["Open", "In Progress"]))),
-    getCountFromServer(query(insBase, where("status", "==", "Closed"))),
-  ]);
+  try {
+    // Mendapatkan data dari Firestore
+    const q = query(
+      collection(db, 'kpiCollection'), // Gantilah 'kpiCollection' dengan nama koleksi Firestore Anda
+      where('date', '>=', fromTs),
+      where('date', '<=', toTsValue),
+      orderBy('date', 'desc'),
+      limit(50) // Anda bisa menyesuaikan jumlah limit ini
+    );
 
-  // --- Hazards ---
-  const hazBase = query(
-    collection(db, "hazards"),               // <— pastikan pakai "hazards"
-    where("createdAt", ">=", fromTs),
-    where("createdAt", "<=", toTs)
-  );
-  const [hazAllSnap, hazOpenSnap, hazClosedSnap] = await Promise.all([
-    getCountFromServer(hazBase),
-    getCountFromServer(query(hazBase, where("status", "in", ["Open", "In Progress"]))),
-    getCountFromServer(query(hazBase, where("status", "==", "Closed"))),
-  ]);
-
-  return {
-    totalInspections: insAllSnap.data().count,
-    openInspections: insOpenSnap.data().count,
-    closedInspections: insClosedSnap.data().count,
-    totalHazards: hazAllSnap.data().count,
-    openHazards: hazOpenSnap.data().count,
-    closedHazards: hazClosedSnap.data().count,
-  };
+    const querySnapshot = await getDocs(q);
+    const records = querySnapshot.docs.map((doc) => doc.data());
+    
+    // Kembalikan hasil KPI dalam bentuk yang sesuai
+    return {
+      totalRecords: records.length,
+      success: true,
+    };
+  } catch (error) {
+    console.error('Error fetching KPI:', error);
+    return {
+      totalRecords: 0,
+      success: false,
+    };
+  }
 }
