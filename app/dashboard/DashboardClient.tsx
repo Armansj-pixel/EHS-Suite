@@ -1,276 +1,216 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  getCountFromServer,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  where,
-} from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-type KPIData = {
-  inspections: number;
-  hazards: number;
-  hirarcOpen: number;
-  ptwActive: number;
-  updatedAt: number;
+type KpiData = {
+  period: { from: string; to: string };
+  totals: {
+    hazards: number;
+    hazardsOpen: number;
+    hazardsClosed: number;
+    nearmiss: number;
+    inspections: number;
+  };
+  trendMonthly: Array<{ month: string; hazards: number; nearmiss: number; inspections: number }>;
+  hazardsByStatus: Array<{ name: string; value: number }>;
+  recentActivities: Array<{
+    type: "hazard" | "nearmiss" | "inspection";
+    id: string;
+    title: string;
+    createdAt: string;
+    status?: string;
+  }>;
 };
-
-type HazardRow = {
-  id: string;
-  date?: string;
-  area?: string;
-  type?: "Hazard" | "Near Miss";
-  riskLevel?: "Low" | "Medium" | "High";
-  status?: "Open" | "In Progress" | "Closed";
-  description?: string;
-  createdByEmail?: string;
-  createdAt?: any;
-};
-
-function KpiCard({
-  title,
-  value,
-  status,
-}: {
-  title: string;
-  value: number;
-  status: "ok" | "warn" | "alert";
-}) {
-  const ring =
-    status === "alert"
-      ? "ring-red-500"
-      : status === "warn"
-      ? "ring-yellow-500"
-      : "ring-emerald-500";
-  return (
-    <div className={`rounded-xl border border-gray-200 p-4 ring-1 ${ring} bg-white`}>
-      <div className="text-sm text-gray-500">{title}</div>
-      <div className="text-3xl font-semibold mt-1">{value}</div>
-    </div>
-  );
-}
-
-async function count(col: string, filter?: { field: string; value: any }) {
-  const ref = collection(db, col);
-  const q = filter ? query(ref, where(filter.field, "==", filter.value)) : ref;
-  const snap = await getCountFromServer(q);
-  return snap.data().count ?? 0;
-}
-
-async function getRecentHazards(limitSize = 5): Promise<HazardRow[]> {
-  const ref = collection(db, "hazard_reports");
-  const q = query(ref, orderBy("createdAt", "desc"), limit(limitSize));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-}
 
 export default function DashboardClient() {
-  const [ready, setReady] = useState(false);
-  const [kpi, setKpi] = useState<KPIData | null>(null);
-  const [hazards, setHazards] = useState<HazardRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const router = useRouter();
+  const search = useSearchParams();
+
+  const [from, setFrom] = useState<string>(search.get("from") ?? "");
+  const [to, setTo] = useState<string>(search.get("to") ?? "");
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [data, setData] = useState<KpiData | null>(null);
+
+  const qs = useMemo(() => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", new Date(from).toISOString());
+    if (to) p.set("to", new Date(to).toISOString());
+    return p.toString();
+  }, [from, to]);
 
   async function load() {
     try {
       setLoading(true);
       setErr(null);
-
-      const [inspections, hazardsCount, hirarcOpen, ptwActive, recentHazards] =
-        await Promise.all([
-          count("inspections"),
-          count("hazard_reports"),
-          count("hirarc", { field: "status", value: "Open" }),
-          count("ptw", { field: "status", value: "Approved" }),
-          getRecentHazards(5),
-        ]);
-
-      setKpi({
-        inspections,
-        hazards: hazardsCount,
-        hirarcOpen,
-        ptwActive,
-        updatedAt: Date.now(),
-      });
-      setHazards(recentHazards);
+      const res = await fetch(`/api/kpi${qs ? "?" + qs : ""}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(await res.text());
+      const json = (await res.json()) as KpiData;
+      setData(json);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.message ?? "Gagal memuat data dashboard");
+      setErr("Gagal memuat KPI");
     } finally {
       setLoading(false);
     }
   }
 
+  // initial load
   useEffect(() => {
-    const auth = getAuth();
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setReady(!!u);
-      if (u) load();
-    });
-    return () => unsub();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!ready) {
-    return <div className="text-sm text-gray-500">Menyiapkan sesi…</div>;
-  }
+  // auto-refresh ringan tiap 30 detik
+  useEffect(() => {
+    const iv = setInterval(() => load(), 30_000);
+    return () => clearInterval(iv);
+  }, [qs]);
 
-  const riskBadge = (r?: string) =>
-    `px-2 py-0.5 rounded text-xs ${
-      r === "High"
-        ? "bg-red-100 text-red-700"
-        : r === "Medium"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-gray-100 text-gray-700"
-    }`;
-
-  const statusBadge = (s?: string) =>
-    `px-2 py-0.5 rounded text-xs ${
-      s === "Closed"
-        ? "bg-emerald-100 text-emerald-700"
-        : s === "In Progress"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-red-100 text-red-700"
-    }`;
+  const onApply = () => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    router.replace(`/dashboard${p.toString() ? "?" + p.toString() : ""}`);
+    load();
+  };
 
   return (
     <div className="space-y-6">
-      {/* Bar atas: timestamp, refresh, dan quick actions */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="text-sm text-gray-600">
-          {kpi ? `Terakhir diperbarui: ${new Date(kpi.updatedAt).toLocaleString("id-ID")}` : "—"}
+      {/* Filter Periode */}
+      <div className="bg-white border rounded-xl p-4 flex flex-col md:flex-row gap-3 md:items-end">
+        <div>
+          <label className="text-sm text-gray-600">Dari</label>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="mt-1 border rounded px-3 py-2 text-sm"
+          />
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div>
+          <label className="text-sm text-gray-600">Sampai</label>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="mt-1 border rounded px-3 py-2 text-sm"
+          />
+        </div>
+        <div className="md:ml-auto">
           <button
-            onClick={load}
-            className="text-sm px-3 py-1 border rounded hover:bg-gray-50 disabled:opacity-60"
+            onClick={onApply}
+            className="px-4 py-2 rounded bg-gray-900 text-white text-sm hover:bg-gray-800"
             disabled={loading}
           >
-            {loading ? "Menyegarkan..." : "Refresh"}
+            {loading ? "Memuat…" : "Terapkan"}
           </button>
-
-          {/* Quick links Inspeksi */}
-          <Link href="/inspections" className="text-sm px-3 py-1 border rounded hover:bg-gray-50">
-            Lihat Inspeksi
-          </Link>
-          <Link
-            href="/inspections/new"
-            className="text-sm px-3 py-1 rounded bg-emerald-600 text-white hover:opacity-90"
-          >
-            + Tambah Inspeksi
-          </Link>
-
-          {/* Quick links Hazard */}
-          <Link href="/hazards" className="text-sm px-3 py-1 border rounded hover:bg-gray-50">
-            Lihat Hazard
-          </Link>
-          <Link
-            href="/hazards/new"
-            className="text-sm px-3 py-1 rounded bg-red-600 text-white hover:opacity-90"
-          >
-            + Tambah Hazard
-          </Link>
         </div>
       </div>
 
-      {/* Error / loading */}
-      {err && <div className="text-sm text-red-600">⚠️ {err}</div>}
-      {loading && !kpi && <div className="text-sm text-gray-500">Memuat data…</div>}
+      {/* Info status */}
+      {loading && <div className="text-sm text-gray-500">Memuat KPI…</div>}
+      {err && <div className="text-sm text-red-600">⚠ {err}</div>}
 
-      {/* Grid KPI */}
-      {kpi && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <KpiCard title="Inspeksi" value={kpi.inspections} status="ok" />
-          <KpiCard
-            title="Hazard / Near Miss"
-            value={kpi.hazards}
-            status={kpi.hazards > 5 ? "warn" : "ok"}
-          />
-          <KpiCard
-            title="HIRARC Open"
-            value={kpi.hirarcOpen}
-            status={kpi.hirarcOpen > 5 ? "alert" : "ok"}
-          />
-          <KpiCard title="PTW Aktif" value={kpi.ptwActive} status="ok" />
-        </div>
-      )}
-
-      {/* Ringkasan Hazard Terbaru */}
-      <section className="bg-white rounded-xl border">
-        <div className="p-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Hazard & Near Miss Terbaru</h3>
-          <div className="flex gap-2">
-            <Link href="/hazards" className="text-sm px-3 py-1 border rounded hover:bg-gray-50">
-              Lihat Semua
-            </Link>
-            <Link
-              href="/hazards/new"
-              className="text-sm px-3 py-1 rounded bg-red-600 text-white hover:opacity-90"
-            >
-              + Tambah Hazard
-            </Link>
+      {/* Kartu KPI */}
+      {data && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <KpiCard title="Hazard" value={data.totals.hazards} />
+            <KpiCard title="Open" value={data.totals.hazardsOpen} />
+            <KpiCard title="Closed" value={data.totals.hazardsClosed} />
+            <KpiCard title="Near Miss" value={data.totals.nearmiss} />
+            <KpiCard title="Inspeksi" value={data.totals.inspections} />
           </div>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
-              <tr>
-                <th className="text-left p-2">Tanggal</th>
-                <th className="text-left p-2">Area</th>
-                <th className="text-left p-2">Jenis</th>
-                <th className="text-left p-2">Risk</th>
-                <th className="text-left p-2">Status</th>
-                <th className="text-left p-2">Pelapor</th>
-                <th className="text-left p-2">Deskripsi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && hazards.length === 0 ? (
-                <tr>
-                  <td className="p-3 text-gray-500" colSpan={7}>
-                    Memuat…
-                  </td>
-                </tr>
-              ) : hazards.length === 0 ? (
-                <tr>
-                  <td className="p-3 text-gray-500" colSpan={7}>
-                    Belum ada laporan
-                  </td>
-                </tr>
-              ) : (
-                hazards.map((h) => (
-                  <tr key={h.id} className="border-t align-top">
-                    <td className="p-2 whitespace-nowrap">{h.date ?? "-"}</td>
-                    <td className="p-2 whitespace-nowrap">{h.area ?? "-"}</td>
-                    <td className="p-2">
-                      <span className="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-700">
-                        {h.type ?? "-"}
-                      </span>
-                    </td>
-                    <td className="p-2">
-                      <span className={riskBadge(h.riskLevel)}>{h.riskLevel ?? "-"}</span>
-                    </td>
-                    <td className="p-2">
-                      <span className={statusBadge(h.status)}>{h.status ?? "-"}</span>
-                    </td>
-                    <td className="p-2 whitespace-nowrap">{h.createdByEmail ?? "-"}</td>
-                    <td className="p-2 max-w-[360px]">
-                      {h.description ?? "-"}
-                    </td>
+          {/* Ringkasan Tren (tanpa grafik) */}
+          <div className="bg-white border rounded-xl p-4">
+            <h3 className="font-medium text-gray-800 mb-2">Tren 6 Bulan (Ringkas)</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-600 border-b">
+                    <th className="py-2 pr-4">Bulan</th>
+                    <th className="py-2 pr-4">Hazard</th>
+                    <th className="py-2 pr-4">Near Miss</th>
+                    <th className="py-2 pr-4">Inspeksi</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                </thead>
+                <tbody>
+                  {data.trendMonthly.map((m) => (
+                    <tr key={m.month} className="border-b last:border-none">
+                      <td className="py-2 pr-4">{m.month}</td>
+                      <td className="py-2 pr-4">{m.hazards}</td>
+                      <td className="py-2 pr-4">{m.nearmiss}</td>
+                      <td className="py-2 pr-4">{m.inspections}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Komposisi Status Hazard (tanpa grafik) */}
+          <div className="bg-white border rounded-xl p-4">
+            <h3 className="font-medium text-gray-800 mb-2">Status Hazard</h3>
+            <ul className="text-sm text-gray-700 list-disc pl-5">
+              {data.hazardsByStatus.map((s) => (
+                <li key={s.name}>
+                  {s.name}: <span className="font-semibold">{s.value}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Aktivitas Terbaru */}
+          <div className="bg-white border rounded-xl p-4">
+            <h3 className="font-medium text-gray-800 mb-3">Aktivitas Terbaru</h3>
+            {data.recentActivities.length === 0 ? (
+              <div className="text-sm text-gray-500">Belum ada data.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-600 border-b">
+                      <th className="py-2 pr-4">Tanggal</th>
+                      <th className="py-2 pr-4">Tipe</th>
+                      <th className="py-2 pr-4">Judul</th>
+                      <th className="py-2 pr-4">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.recentActivities.map((r) => (
+                      <tr key={`${r.type}-${r.id}`} className="border-b last:border-none">
+                        <td className="py-2 pr-4">
+                          {new Date(r.createdAt).toLocaleString("id-ID")}
+                        </td>
+                        <td className="py-2 pr-4 capitalize">{r.type}</td>
+                        <td className="py-2 pr-4">{r.title}</td>
+                        <td className="py-2 pr-4">{r.status ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="text-xs text-gray-500 mt-2">
+              Periode:{" "}
+              {new Date(data.period.from).toLocaleDateString("id-ID")} —{" "}
+              {new Date(data.period.to).toLocaleDateString("id-ID")}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function KpiCard({ title, value }: { title: string; value: number }) {
+  return (
+    <div className="bg-white border rounded-xl p-4">
+      <div className="text-xs text-gray-500 mb-1">{title}</div>
+      <div className="text-2xl font-semibold">{value}</div>
     </div>
   );
 }
