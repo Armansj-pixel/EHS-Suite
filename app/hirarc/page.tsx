@@ -1,10 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/firebase";
 import {
-  collection, getDocs, query, orderBy, limit, startAfter, updateDoc, doc
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  startAfter,
+  updateDoc,
+  doc,
+  where,
 } from "firebase/firestore";
 import { useUserProfile } from "@/lib/useUserProfile";
 import { getAuth } from "firebase/auth";
@@ -18,6 +26,8 @@ type HDoc = {
   severity?: number;
   riskScore?: number;
   riskLevel?: "Low" | "Medium" | "High";
+  existingControls?: string;
+  additionalControls?: string;
   owner?: string;
   dueDate?: any;
   status: "Open" | "Closed";
@@ -30,6 +40,8 @@ const PAGE_SIZE = 20;
 
 export default function HIRARCListPage() {
   const { profile } = useUserProfile();
+
+  // states
   const [items, setItems] = useState<HDoc[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -37,19 +49,36 @@ export default function HIRARCListPage() {
   const [last, setLast] = useState<any>(null);
   const [hasMore, setHasMore] = useState(true);
 
+  // filters
+  const [statusFilter, setStatusFilter] = useState<"All" | "Open" | "Closed">("All");
+  const [riskFilter, setRiskFilter] = useState<"All" | "Low" | "Medium" | "High">("All");
+  const [search, setSearch] = useState<string>("");
+
   const uid = getAuth().currentUser?.uid || null;
   const myRole = profile?.role || "staff";
   const isManager = ["owner", "ehs_manager", "admin"].includes(myRole);
+
+  // Build Firestore query based on filters
+  function buildQuery(start?: any) {
+    const col = collection(db, "hirarc");
+    const clauses: any[] = [];
+    if (statusFilter !== "All") clauses.push(where("status", "==", statusFilter));
+    if (riskFilter !== "All") clauses.push(where("riskLevel", "==", riskFilter));
+    // Catatan: pencarian keyword dilakukan client-side (tanpa full-text index)
+    // agar tidak menambah dependency; export akan ikut hasil client-side.
+
+    const base = query(col, ...clauses, orderBy("createdAt", "desc"));
+    if (start) {
+      return query(col, ...clauses, orderBy("createdAt", "desc"), startAfter(start), limit(PAGE_SIZE));
+    }
+    return query(col, ...clauses, orderBy("createdAt", "desc"), limit(PAGE_SIZE));
+  }
 
   async function loadFirst() {
     setLoading(true);
     setErr(null);
     try {
-      const qRef = query(
-        collection(db, "hirarc"),
-        orderBy("createdAt", "desc"),
-        limit(PAGE_SIZE)
-      );
+      const qRef = buildQuery();
       const snap = await getDocs(qRef);
       const arr: HDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
       setItems(arr);
@@ -68,12 +97,7 @@ export default function HIRARCListPage() {
     setLoadingMore(true);
     setErr(null);
     try {
-      const qRef = query(
-        collection(db, "hirarc"),
-        orderBy("createdAt", "desc"),
-        startAfter(last),
-        limit(PAGE_SIZE)
-      );
+      const qRef = buildQuery(last);
       const snap = await getDocs(qRef);
       const arr: HDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
       setItems((prev) => [...prev, ...arr]);
@@ -87,10 +111,26 @@ export default function HIRARCListPage() {
     }
   }
 
+  // reload saat filter berubah
   useEffect(() => {
+    setItems([]);
+    setLast(null);
+    setHasMore(true);
     loadFirst();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [statusFilter, riskFilter]);
+
+  // client-side search (activity/hazard/owner)
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((it) => {
+      const a = (it.activity || "").toLowerCase();
+      const h = (it.hazard || "").toLowerCase();
+      const o = (it.owner || "").toLowerCase();
+      return a.includes(q) || h.includes(q) || o.includes(q);
+    });
+  }, [items, search]);
 
   async function closeItem(id: string) {
     try {
@@ -124,25 +164,142 @@ export default function HIRARCListPage() {
       ? "bg-amber-100 text-amber-700"
       : "bg-emerald-100 text-emerald-700");
 
+  // Export CSV (mengambil data yang sedang ada di memori + hasil filter client-side)
+  function exportCSV() {
+    const rows = [
+      [
+        "Tanggal",
+        "Aktivitas",
+        "Hazard",
+        "Consequence",
+        "Likelihood",
+        "Severity",
+        "RiskScore",
+        "RiskLevel",
+        "PIC",
+        "DueDate",
+        "Status",
+        "DocID",
+      ],
+      ...filtered.map((it) => [
+        fmtDate(it.createdAt),
+        safeCSV(it.activity),
+        safeCSV(it.hazard),
+        safeCSV(it.consequence),
+        it.likelihood ?? "",
+        it.severity ?? "",
+        it.riskScore ?? "",
+        it.riskLevel ?? "",
+        safeCSV(it.owner),
+        fmtDate(it.dueDate),
+        it.status,
+        it.id,
+      ]),
+    ];
+    const csv = rows.map((r) => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `hirarc_export_${date}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function safeCSV(v?: string) {
+    if (!v) return "";
+    // bungkus dengan kutip bila ada koma atau newline
+    if (v.includes(",") || v.includes("\n") || v.includes('"')) {
+      return `"${v.replace(/"/g, '""')}"`;
+    }
+    return v;
+  }
+
+  function printPage() {
+    // gunakan dialog print → user bisa simpan ke PDF
+    window.print();
+  }
+
+  function resetFilters() {
+    setStatusFilter("All");
+    setRiskFilter("All");
+    setSearch("");
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      {/* Header + Aksi */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <h1 className="text-xl font-semibold">HIRARC</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link href="/hirarc/new" className="px-3 py-2 text-sm bg-gray-900 text-white rounded hover:bg-gray-800">
             + HIRARC
           </Link>
+          <button onClick={exportCSV} className="px-3 py-2 text-sm border rounded hover:bg-gray-50">
+            Export CSV
+          </button>
+          <button onClick={printPage} className="px-3 py-2 text-sm border rounded hover:bg-gray-50">
+            Cetak / Simpan PDF
+          </button>
+        </div>
+      </div>
+
+      {/* Filter bar */}
+      <div className="bg-white border rounded-xl p-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="md:col-span-2">
+          <label className="text-xs text-gray-500">Cari (Activity / Hazard / PIC)</label>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="ketik kata kunci…"
+            className="mt-1 border rounded px-3 py-2 w-full text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">Status</label>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+            className="mt-1 border rounded px-3 py-2 w-full text-sm"
+          >
+            <option value="All">All</option>
+            <option value="Open">Open</option>
+            <option value="Closed">Closed</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500">Risk Level</label>
+          <select
+            value={riskFilter}
+            onChange={(e) => setRiskFilter(e.target.value as any)}
+            className="mt-1 border rounded px-3 py-2 w-full text-sm"
+          >
+            <option value="All">All</option>
+            <option value="Low">Low</option>
+            <option value="Medium">Medium</option>
+            <option value="High">High</option>
+          </select>
+        </div>
+        <div className="md:col-span-4 flex gap-2">
+          <button onClick={loadFirst} className="px-3 py-2 text-sm border rounded hover:bg-gray-50">
+            Terapkan
+          </button>
+          <button onClick={resetFilters} className="px-3 py-2 text-sm border rounded hover:bg-gray-50">
+            Reset
+          </button>
+          {loading && <span className="text-sm text-gray-500 self-center">Memuat…</span>}
         </div>
       </div>
 
       {err && <div className="text-sm text-red-600">⚠ {err}</div>}
-      {loading && <div className="text-sm text-gray-500">Memuat data…</div>}
 
-      {!loading && items.length === 0 ? (
-        <div className="text-sm text-gray-500">Belum ada data HIRARC.</div>
+      {/* Tabel */}
+      {!loading && filtered.length === 0 ? (
+        <div className="text-sm text-gray-500">Tidak ada data yang cocok.</div>
       ) : (
         <div className="overflow-x-auto bg-white border rounded-xl">
-          <table className="min-w-full text-sm">
+          <table className="min-w-full text-sm print:text-xs">
             <thead>
               <tr className="text-left text-gray-600 border-b">
                 <th className="py-2 px-3">Tanggal</th>
@@ -152,11 +309,11 @@ export default function HIRARCListPage() {
                 <th className="py-2 px-3">PIC</th>
                 <th className="py-2 px-3">Due</th>
                 <th className="py-2 px-3">Status</th>
-                <th className="py-2 px-3 text-right">Aksi</th>
+                <th className="py-2 px-3 text-right print:hidden">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => (
+              {filtered.map((it) => (
                 <tr key={it.id} className="border-b last:border-none">
                   <td className="py-2 px-3 whitespace-nowrap">{fmtDate(it.createdAt)}</td>
                   <td className="py-2 px-3">
@@ -182,8 +339,8 @@ export default function HIRARCListPage() {
                       {it.status}
                     </span>
                   </td>
-                  <td className="py-2 px-3 text-right">
-                    {canClose(it) ? (
+                  <td className="py-2 px-3 text-right print:hidden">
+                    {it.status === "Open" && canClose(it) ? (
                       <button
                         className="px-3 py-1.5 text-xs bg-gray-900 text-white rounded hover:bg-gray-800"
                         onClick={() => closeItem(it.id)}
@@ -200,7 +357,7 @@ export default function HIRARCListPage() {
           </table>
 
           {/* Load more */}
-          <div className="p-3 flex justify-center">
+          <div className="p-3 flex justify-center print:hidden">
             {hasMore ? (
               <button
                 onClick={loadMore}
@@ -215,6 +372,15 @@ export default function HIRARCListPage() {
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        @media print {
+          a[href]:after { content: ""; }
+          button, .print\\:hidden { display: none !important; }
+          table { page-break-inside: auto; }
+          tr { page-break-inside: avoid; page-break-after: auto; }
+        }
+      `}</style>
     </div>
   );
 }
