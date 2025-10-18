@@ -2,14 +2,14 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
-// Konfigurasi Firebase
+// Ambil konfigurasi dari .env
 const firebaseConfig = {
-  apiKey: AIzaSyDoFgYKHbiKXonkPh7zgKYwaFM2cp_-2WI, // Ganti dengan apiKey yang sesuai
-  authDomain: ehs-suite-fedff.firebaseapp.com, // Ganti dengan authDomain yang sesuai
-  projectId: ehs-suite-fedff, // Ganti dengan projectId yang sesuai
-  storageBucket: ehs-suite-fedff.firebasestorage.app // Ganti dengan storageBucket yang sesuai
-  messagingSenderId: 953205445535, // Ganti dengan messagingSenderId yang sesuai
-  appId: 1:953205445535:web:9b43938d0749ceaf9263aa, // Ganti dengan appId yang sesuai
+  apiKey: process.env.NEXT_PUBLIC_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_APP_ID,
 };
 
 // Inisialisasi Firebase
