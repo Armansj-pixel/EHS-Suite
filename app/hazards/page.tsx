@@ -1,14 +1,12 @@
-// app/hazards/page.tsx
-import HazardsClient from "./HazardsClient";
-
-export const dynamic = "force-static";
-export const revalidate = 0;
-
 export default function HazardsPage() {
   return (
-    <main className="p-6 max-w-6xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold text-gray-800">Hazard & Near Miss</h1>
-      <HazardsClient />
-    </main>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Hazards</h1>
+        <a href="/hazards/new" className="px-3 py-2 rounded bg-gray-900 text-white text-sm">Laporkan Hazard</a>
+      </div>
+      {/* TODO: render list hazard (nanti) */}
+      <p className="text-sm text-gray-500">Daftar hazard akan tampil di sini.</p>
+    </div>
   );
 }
