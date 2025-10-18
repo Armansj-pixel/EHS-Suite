@@ -1,16 +1,62 @@
 // lib/kpi.ts
-export type KPIData = {
-  inspections: number;
-  hazards: number;
-  hirarcOpen: number;
-  ptwActive: number;
-  updatedAt: number;
+import { db } from "@/lib/firestore";
+import {
+  collection,
+  getCountFromServer,
+  query,
+  where,
+  Timestamp,
+} from "firebase/firestore";
+
+export type KpiWindow = { from: Date; to: Date };
+
+export type KpiResult = {
+  totalInspections: number;
+  openInspections: number;
+  closedInspections: number;
+  totalHazards: number;
+  openHazards: number;
+  closedHazards: number;
 };
 
-export async function fetchKPI(): Promise<KPIData> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/api/kpi`, {
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error("Failed to load KPI");
-  return res.json();
+function toTs(d: Date) {
+  return Timestamp.fromDate(d);
+}
+
+export async function fetchKPI({ from, to }: KpiWindow): Promise<KpiResult> {
+  const fromTs = toTs(from);
+  const toTs = toTs(to);
+
+  // --- Inspections ---
+  const insBase = query(
+    collection(db, "inspections"),
+    where("createdAt", ">=", fromTs),
+    where("createdAt", "<=", toTs)
+  );
+  const [insAllSnap, insOpenSnap, insClosedSnap] = await Promise.all([
+    getCountFromServer(insBase),
+    getCountFromServer(query(insBase, where("status", "in", ["Open", "In Progress"]))),
+    getCountFromServer(query(insBase, where("status", "==", "Closed"))),
+  ]);
+
+  // --- Hazards ---
+  const hazBase = query(
+    collection(db, "hazards"),               // <— pastikan pakai "hazards"
+    where("createdAt", ">=", fromTs),
+    where("createdAt", "<=", toTs)
+  );
+  const [hazAllSnap, hazOpenSnap, hazClosedSnap] = await Promise.all([
+    getCountFromServer(hazBase),
+    getCountFromServer(query(hazBase, where("status", "in", ["Open", "In Progress"]))),
+    getCountFromServer(query(hazBase, where("status", "==", "Closed"))),
+  ]);
+
+  return {
+    totalInspections: insAllSnap.data().count,
+    openInspections: insOpenSnap.data().count,
+    closedInspections: insClosedSnap.data().count,
+    totalHazards: hazAllSnap.data().count,
+    openHazards: hazOpenSnap.data().count,
+    closedHazards: hazClosedSnap.data().count,
+  };
 }
