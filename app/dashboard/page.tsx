@@ -17,6 +17,13 @@ export default function DashboardPage() {
     router.push("/login");
   }
 
+  // ✅ Avatar fallback: pakai Auth.photoURL jika ada, kalau tidak gunakan UI Avatars
+  const avatarUrl =
+    auth.currentUser?.photoURL ||
+    ("https://ui-avatars.com/api/?name=" +
+      encodeURIComponent(profile?.name || "User") +
+      "&background=0D8ABC&color=fff");
+
   return (
     <div className="space-y-6">
       {/* === Top Bar === */}
@@ -31,12 +38,7 @@ export default function DashboardPage() {
               className="flex items-center gap-2 focus:outline-none"
             >
               <img
-                src={
-                  profile?.photoURL ||
-                  "https://ui-avatars.com/api/?name=" +
-                    encodeURIComponent(profile?.name || "User") +
-                    "&background=0D8ABC&color=fff"
-                }
+                src={avatarUrl}
                 alt="Profile"
                 className="w-9 h-9 rounded-full border"
               />
