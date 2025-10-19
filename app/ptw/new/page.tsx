@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Timestamp } from "firebase/firestore";
-import { useAuthState } from "react-firebase-hooks/auth";
+import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { createPTW } from "@/lib/ptw";
 import { useRouter } from "next/navigation";
@@ -11,8 +11,18 @@ import AuthGate from "@/components/AuthGate";
 const PTW_TYPES = ["Hot Work", "Electrical", "Confined Space", "Lifting", "Working at Height"];
 
 export default function PTWNewPage() {
-  const [user] = useAuthState(auth);
+  const [user, setUser] = useState<User | null>(null);
+  const [ready, setReady] = useState(false);
   const router = useRouter();
+
+  // Gantikan useAuthState dengan listener native
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setReady(true);
+    });
+    return () => unsub();
+  }, []);
 
   const [type, setType] = useState(PTW_TYPES[0]);
   const [area, setArea] = useState("");
@@ -23,8 +33,10 @@ export default function PTWNewPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!user) return;
-
+    if (!user) {
+      alert("Anda belum login.");
+      return;
+    }
     if (!type || !area || !job || !start || !end) {
       alert("Isi semua field wajib.");
       return;
@@ -32,7 +44,7 @@ export default function PTWNewPage() {
     const startTs = Timestamp.fromDate(new Date(start));
     const endTs = Timestamp.fromDate(new Date(end));
     if (startTs.toMillis() >= endTs.toMillis()) {
-      alert("Waktu mulai harus < waktu selesai.");
+      alert("Waktu mulai harus lebih kecil dari waktu selesai.");
       return;
     }
 
@@ -46,7 +58,6 @@ export default function PTWNewPage() {
       startPlanned: startTs,
       endPlanned: endTs,
       createdBy: user.uid,
-      // opsional:
       approvals: [],
       controls: { fireWatch: false, gasTest: { required: false } as any },
       extension: { count: 0, history: [] },
@@ -54,6 +65,14 @@ export default function PTWNewPage() {
     } as any);
 
     router.replace(`/ptw/${id}`);
+  }
+
+  if (!ready) {
+    return (
+      <AuthGate>
+        <div className="max-w-3xl mx-auto p-4 text-gray-500">Memuat...</div>
+      </AuthGate>
+    );
   }
 
   return (
