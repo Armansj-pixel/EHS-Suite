@@ -1,7 +1,8 @@
 // lib/ptw.ts
-import { db, serverTimestamp } from "@/lib/firestore";
+import { db } from "@/lib/firestore";
 import {
-  collection, doc, addDoc, getDoc, getDocs, updateDoc, query, where, orderBy, Timestamp
+  collection, doc, addDoc, getDoc, getDocs, updateDoc,
+  query, where, orderBy, Timestamp, serverTimestamp
 } from "firebase/firestore";
 
 export type PTWStatus = "Draft" | "Submitted" | "Rejected" | "Approved" | "Active" | "Closed" | "Expired" | "Cancelled";
@@ -42,7 +43,7 @@ export interface PTW {
 
 const col = collection(db, "ptw");
 
-// Generator nomor sederhana (opsional bisa diganti counter terpisah)
+// Generator nomor sederhana
 export async function generatePTWCode(): Promise<string> {
   const now = new Date();
   const y = now.getFullYear();
@@ -94,20 +95,26 @@ export async function updatePTWStatus(id: string, next: PTWStatus, byUid: string
 
 export async function activatePTW(id: string, byUid: string) {
   const ref = doc(db, "ptw", id);
+  // Ambil trail lama bila ada
+  const snap = await getDoc(ref);
+  const trail = (snap.exists() ? (snap.data().auditTrail ?? []) : []) as PTW["auditTrail"];
   await updateDoc(ref, {
     status: "Active",
     startActual: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    auditTrail: [{ at: serverTimestamp(), by: byUid, action: "ACTIVATE" }]
+    auditTrail: [...(trail ?? []), { at: serverTimestamp(), by: byUid, action: "ACTIVATE" }]
   } as any);
 }
 
 export async function closePTW(id: string, byUid: string, note?: string) {
   const ref = doc(db, "ptw", id);
+  // Ambil trail lama bila ada
+  const snap = await getDoc(ref);
+  const trail = (snap.exists() ? (snap.data().auditTrail ?? []) : []) as PTW["auditTrail"];
   await updateDoc(ref, {
     status: "Closed",
     endActual: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    auditTrail: [{ at: serverTimestamp(), by: byUid, action: "CLOSE", note: note ?? null }]
+    auditTrail: [...(trail ?? []), { at: serverTimestamp(), by: byUid, action: "CLOSE", note: note ?? null }]
   } as any);
 }
