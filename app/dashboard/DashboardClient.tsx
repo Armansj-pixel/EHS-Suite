@@ -74,7 +74,7 @@ export default function DashboardClient() {
         <DashCard
           title="Daftar Hazard"
           desc="Lihat & tutup tiket"
-          href="/hazard"
+          href="/hazards"
         />
         {/* Permit to Work (opsional; tampil kalau rute tersedia) */}
         <DashCard
