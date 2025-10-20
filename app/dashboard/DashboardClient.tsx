@@ -78,7 +78,7 @@ export default function DashboardClient() {
       {/* Quick Actions (cards) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <Link
-          href="/hazard/new"
+          href="/hazards/new"
           className="rounded-xl border border-neutral-200 bg-white p-4 hover:shadow-md"
         >
           <div className="text-lg font-semibold">+ Hazard</div>
