@@ -1,5 +1,5 @@
 // lib/ptw.ts
-import { db, serverTimestamp } from "@/lib/firestore";
+import { db } from "@/lib/firestore";
 import {
   collection, doc, addDoc, getDoc, getDocs, updateDoc,
   query, where, orderBy, Timestamp, serverTimestamp
