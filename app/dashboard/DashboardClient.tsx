@@ -59,7 +59,7 @@ export default function DashboardClient() {
         <DashCard
           title="+ Hazard"
           desc="Buat laporan hazard"
-          href="/hazard/new"
+          href="/hazards/new"
         />
         <DashCard
           title="+ Near Miss"
