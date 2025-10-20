@@ -57,12 +57,12 @@ export default function DashboardClient() {
       {/* Quick actions (pad & spacing konsisten) */}
       <div className="grid gap-4 md:grid-cols-2">
         <DashCard
-          title="+ Hazard"
+          title="Hazard"
           desc="Buat laporan hazard"
           href="/hazards/new"
         />
         <DashCard
-          title="+ Near Miss"
+          title="Near Miss"
           desc="Catat kejadian hampir celaka"
           href="/nearmiss/new"
         />
