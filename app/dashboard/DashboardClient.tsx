@@ -1,170 +1,122 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { db } from "@/lib/firestore";
-import { doc, getDoc } from "firebase/firestore";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 
-type Profile = {
-  uid: string;
-  name?: string;
-  email?: string;
-  role?: string;
-  photoURL?: string;
-};
+type UserMini = { name: string; email: string; role?: string };
 
 export default function DashboardClient() {
-  const router = useRouter();
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [me, setMe] = useState<UserMini | null>(null);
 
   useEffect(() => {
-    const u = auth.currentUser;
-    if (!u) return;
-
-    // Ambil profil dari koleksi "users/{uid}" (jika ada), kalau tidak ada gunakan data auth.
-    (async () => {
-      try {
-        const ref = doc(db, "users", u.uid);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          const data = snap.data() as Partial<Profile>;
-          setProfile({
-            uid: u.uid,
-            name: data.name || u.displayName || u.email || "User",
-            email: data.email || u.email || "",
-            role: data.role || "staff",
-            photoURL: data.photoURL || u.photoURL || undefined,
-          });
-        } else {
-          setProfile({
-            uid: u.uid,
-            name: u.displayName || u.email || "User",
-            email: u.email || "",
-            role: "staff",
-            photoURL: u.photoURL || undefined,
-          });
-        }
-      } catch {
-        setProfile({
-          uid: u.uid,
-          name: u.displayName || u.email || "User",
-          email: u.email || "",
-          role: "staff",
-          photoURL: u.photoURL || undefined,
-        });
-      }
-    })();
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u) return setMe(null);
+      // nama dari profile/users bisa ditambahkan nanti; sementara pakai displayName/email
+      setMe({
+        name: u.displayName || "User",
+        email: u.email || "",
+      });
+    });
+    return () => unsub();
   }, []);
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.push("/login");
-  };
+  const initials =
+    me?.name
+      ?.split(" ")
+      .map((s) => s[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "U";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Top Bar */}
-      <header className="flex items-center justify-between bg-white shadow px-6 py-3">
-        <h1 className="text-lg font-semibold text-gray-800">EHS Suite Dashboard</h1>
+    <div className="mx-auto max-w-6xl p-4 md:p-6">
+      {/* Top bar */}
+      <div className="mb-4 flex items-center justify-between rounded-xl border bg-white px-4 py-3 shadow-sm">
+        <h1 className="text-xl font-semibold">EHS Suite Dashboard</h1>
         <div className="flex items-center gap-3">
-          <img
-            alt="avatar"
-            className="w-8 h-8 rounded-full border"
-            src={
-              profile?.photoURL ||
-              `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                profile?.name || "User"
-              )}&background=0D8ABC&color=fff`
-            }
-          />
-          <div className="text-right">
-            <div className="text-sm font-medium text-gray-700">
-              {profile?.name || "User"}
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 font-semibold">
+              {initials}
             </div>
-            <div className="text-xs text-gray-500">
-              {profile?.role ? profile.role.toUpperCase() : "USER"}
+            <div className="hidden text-right md:block">
+              <div className="text-sm font-medium leading-tight">{me?.name}</div>
+              <div className="text-xs text-slate-500">{me?.email}</div>
             </div>
           </div>
           <button
-            onClick={handleLogout}
-            className="ml-2 px-3 py-1 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600"
+            onClick={() => signOut(auth)}
+            className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
           >
             Logout
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* Menu Cards */}
-      <main className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Hazard */}
-        <Link
-          href="/hazard"
-          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition"
-        >
-          <h2 className="text-xl font-semibold text-green-700 mb-2">⚠️ Hazard Report</h2>
-          <p className="text-gray-500 text-sm">
-            Laporkan potensi bahaya di area kerja untuk mencegah insiden.
-          </p>
-        </Link>
-
-        {/* Near Miss */}
-        <Link
-          href="/nearmiss"
-          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition"
-        >
-          <h2 className="text-xl font-semibold text-yellow-600 mb-2">⚡ Near Miss</h2>
-          <p className="text-gray-500 text-sm">
-            Catat kejadian nyaris celaka sebelum menjadi insiden serius.
-          </p>
-        </Link>
-
-        {/* Inspections */}
-        <Link
+      {/* Quick actions (pad & spacing konsisten) */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <DashCard
+          title="+ Hazard"
+          desc="Buat laporan hazard"
+          href="/hazard/new"
+        />
+        <DashCard
+          title="+ Near Miss"
+          desc="Catat kejadian hampir celaka"
+          href="/nearmiss/new"
+        />
+        <DashCard
+          title="Inspeksi"
+          desc="Checklist & rekap inspeksi"
           href="/inspections"
-          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition"
-        >
-          <h2 className="text-xl font-semibold text-blue-600 mb-2">🔍 Inspeksi</h2>
-          <p className="text-gray-500 text-sm">
-            Catat temuan inspeksi area, APD, alat angkut, housekeeping, dll.
-          </p>
-        </Link>
-
-        {/* KPI */}
-        <Link
-          href="/dashboard/kpi"
-          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition"
-        >
-          <h2 className="text-xl font-semibold text-indigo-600 mb-2">📊 KPI Dashboard</h2>
-          <p className="text-gray-500 text-sm">
-            Pantau performa keselamatan melalui KPI otomatis dari laporan EHS.
-          </p>
-        </Link>
-
-        {/* PTW */}
-        <Link
+        />
+        <DashCard
+          title="Daftar Hazard"
+          desc="Lihat & tutup tiket"
+          href="/hazard"
+        />
+        {/* Permit to Work (opsional; tampil kalau rute tersedia) */}
+        <DashCard
+          title="Permit to Work"
+          desc="Ajukan & kelola izin kerja"
           href="/ptw"
-          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition"
-        >
-          <h2 className="text-xl font-semibold text-red-600 mb-2">🧾 Permit To Work (PTW)</h2>
-          <p className="text-gray-500 text-sm">
-            Ajukan dan kelola izin kerja berisiko: Hot Work, Electrical, Confined Space, dsb.
-          </p>
-        </Link>
+        />
+      </div>
 
-        {/* HIRARC */}
-        <Link
-          href="/hirarc"
-          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition"
-        >
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">🧠 HIRARC</h2>
-          <p className="text-gray-500 text-sm">
-            Kelola Hazard Identification, Risk Assessment, and Risk Control.
-          </p>
-        </Link>
-      </main>
+      {/* KPI Panel (tetap di dashboard) */}
+      <section className="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+        <h2 className="mb-3 text-lg font-semibold">Dashboard KPI</h2>
+        {/* Komponen/isi KPI kamu di sini.
+            Jika kamu sudah punya <KpiPanel /> tinggal panggil:
+            <KpiPanel />
+        */}
+        <p className="text-sm text-slate-500">
+          KPI dihitung dari koleksi <code>hazard_reports</code> dan{" "}
+          <code>inspections</code>. Pastikan setiap dokumen punya field{" "}
+          <code>createdAt</code> (Timestamp) & <code>createdBy</code>.
+        </p>
+      </section>
     </div>
+  );
+}
+
+function DashCard({
+  title,
+  desc,
+  href,
+}: {
+  title: string;
+  desc: string;
+  href: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="block rounded-xl border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div className="text-base font-semibold">{title}</div>
+      <div className="mt-1 text-sm text-slate-600">{desc}</div>
+    </Link>
   );
 }
