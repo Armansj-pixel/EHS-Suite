@@ -1,8 +1,12 @@
 // lib/firestore.ts
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore, serverTimestamp } from "firebase/firestore";
+import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
+/**
+ * Pakai kredensial "NEXT_PUBLIC_*" untuk client-side.
+ * Pastikan sudah diset di Vercel Project Settings → Environment Variables.
+ */
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
@@ -12,10 +16,8 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-// ✅ Pastikan hanya satu instance app yang dibuat
+// Hindari duplicate app saat hot-reload / multiple import.
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// Export untuk digunakan di modul lain
 export const db = getFirestore(app);
 export const auth = getAuth(app);
-export { serverTimestamp };
