@@ -1,74 +1,78 @@
+// app/ptw/new/PTWForm.tsx
 "use client";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createPTW, PTW } from "@/lib/ptw";
-import { auth } from "@/lib/firebase";
+import { createPTW } from "@/lib/ptw";
 
 export default function PTWForm() {
+  const [title, setTitle] = useState("");
+  const [location, setLocation] = useState("");
+  const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({
-    title: "",
-    location: "",
-    description: "",
-    startDate: "",
-    endDate: "",
-  });
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (loading) return;
-    setLoading(true);
+    if (!title.trim() || !location.trim() || !description.trim()) {
+      alert("Lengkapi judul, lokasi, dan deskripsi.");
+      return;
+    }
     try {
-      const user = auth.currentUser;
-      if (!user) throw new Error("Not authenticated");
-
-      const payload: PTW = {
-        title: form.title.trim(),
-        location: form.location.trim(),
-        description: form.description.trim(),
-        requesterUid: user.uid,
-        startDate: new Date(form.startDate),
-        endDate: new Date(form.endDate),
-        status: "Submitted",
-      };
-      const id = await createPTW(payload);
-      router.push(`/ptw/${id}`);
-    } catch (err) {
+      setSubmitting(true);
+      const id = await createPTW({ title, location, description });
+      // opsional: toast sukses
+      alert("PTW terkirim (Submitted).");
+      router.push(`/ptw`); // arahkan ke daftar PTW
+    } catch (err: any) {
       console.error(err);
-      alert("Gagal mengirim PTW. Cek koneksi & izin.");
+      alert(`Gagal mengirim PTW. ${err?.message ?? "Cek koneksi & izin."}`);
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4 max-w-xl">
-      <input required placeholder="Judul pekerjaan"
-        className="w-full border rounded p-2"
-        value={form.title}
-        onChange={e => setForm(s => ({ ...s, title: e.target.value }))} />
-      <input required placeholder="Lokasi"
-        className="w-full border rounded p-2"
-        value={form.location}
-        onChange={e => setForm(s => ({ ...s, location: e.target.value }))} />
-      <textarea required placeholder="Deskripsi singkat"
-        className="w-full border rounded p-2"
-        rows={4}
-        value={form.description}
-        onChange={e => setForm(s => ({ ...s, description: e.target.value }))} />
-      <div className="grid grid-cols-2 gap-3">
-        <input required type="date" className="border rounded p-2"
-          value={form.startDate}
-          onChange={e => setForm(s => ({ ...s, startDate: e.target.value }))} />
-        <input required type="date" className="border rounded p-2"
-          value={form.endDate}
-          onChange={e => setForm(s => ({ ...s, endDate: e.target.value }))} />
+    <form onSubmit={onSubmit} className="max-w-xl mx-auto p-4 space-y-4">
+      <h1 className="text-2xl font-semibold">Permit to Work — Form Baru</h1>
+
+      <input
+        className="w-full border rounded-lg px-3 py-2"
+        placeholder="Judul pekerjaan"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+
+      <input
+        className="w-full border rounded-lg px-3 py-2"
+        placeholder="Lokasi"
+        value={location}
+        onChange={(e) => setLocation(e.target.value)}
+      />
+
+      <textarea
+        className="w-full border rounded-lg px-3 py-2 min-h-[140px]"
+        placeholder="Deskripsi pekerjaan / risiko singkat"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      />
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-60"
+        >
+          {submitting ? "Mengirim…" : "Submit"}
+        </button>
+        <button
+          type="button"
+          onClick={() => history.back()}
+          className="px-4 py-2 rounded-lg border"
+        >
+          Batal
+        </button>
       </div>
-      <button type="submit" disabled={loading}
-        className="px-4 py-2 rounded bg-black text-white disabled:opacity-50">
-        {loading ? "Mengirim..." : "Submit PTW"}
-      </button>
     </form>
   );
 }
