@@ -1,50 +1,105 @@
 // lib/ptw.ts
-import { db } from "@/lib/firestore";
+import { auth, db } from "@/lib/firestore";
 import {
-  collection, addDoc, updateDoc, doc, getDoc, getDocs,
-  query, where, orderBy, Timestamp
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  Timestamp,
 } from "firebase/firestore";
 
 export type PTWStatus =
-  | "Draft" | "Submitted" | "Rejected" | "Approved"
-  | "Active" | "Closed" | "Expired" | "Cancelled";
+  | "Draft"
+  | "Submitted"
+  | "Rejected"
+  | "Approved"
+  | "Active"
+  | "Closed"
+  | "Expired"
+  | "Cancelled";
 
-export type PTW = {
+export interface PTW {
+  id: string;
   title: string;
   location: string;
   description: string;
-  requesterUid: string;
-  startDate: Date;
-  endDate: Date;
   status: PTWStatus;
-  createdAt?: Timestamp;
-  updatedAt?: Timestamp;
-  hazards?: string[];
-};
+  requesterUid: string;
+  requesterName?: string | null;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
 
-export type PTWWithId = PTW & { id: string };
+/** Buat PTW baru */
+export async function createPTW(input: {
+  title: string;
+  location: string;
+  description: string;
+}): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Unauthenticated");
 
-export async function createPTW(data: PTW) {
-  const now = Timestamp.now();
-  const payload: PTW = { ...data, status: data.status ?? "Submitted", createdAt: now, updatedAt: now };
-  const ref = await addDoc(collection(db, "ptw"), payload);
+  const ref = await addDoc(collection(db, "ptw"), {
+    title: input.title.trim(),
+    location: input.location.trim(),
+    description: input.description.trim(),
+    status: "Submitted" as PTWStatus,
+    requesterUid: user.uid,
+    requesterName: user.displayName ?? user.email ?? null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
   return ref.id;
 }
 
-export async function updatePTWStatus(id: string, status: PTWStatus) {
-  await updateDoc(doc(db, "ptw", id), { status, updatedAt: Timestamp.now() });
+/** Ambil  PTW milik user login (default). Jika owner ingin lihat semua, set `all=true` dan siapkan rules. */
+export async function listPTW(options?: { all?: boolean }): Promise<PTW[]> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Unauthenticated");
+
+  const col = collection(db, "ptw");
+  const q = options?.all
+    ? query(col, orderBy("createdAt", "desc"))
+    : query(col, where("requesterUid", "==", user.uid), orderBy("createdAt", "desc"));
+
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => {
+    const data = d.data() as Omit<PTW, "id">;
+    return {
+      id: d.id,
+      title: (data as any).title ?? "",
+      location: (data as any).location ?? "",
+      description: (data as any).description ?? "",
+      status: (data as any).status ?? ("Submitted" as PTWStatus),
+      requesterUid: (data as any).requesterUid ?? "",
+      requesterName: (data as any).requesterName ?? null,
+      createdAt: (data as any).createdAt ?? null,
+      updatedAt: (data as any).updatedAt ?? null,
+    };
+  });
 }
 
-export async function getPTW(id: string): Promise<PTWWithId | null> {
-  const snap = await getDoc(doc(db, "ptw", id));
-  return snap.exists() ? ({ id: snap.id, ...(snap.data() as PTW) }) : null;
+/** Ambil detail satu PTW */
+export async function getPTW(id: string): Promise<PTW | null> {
+  const ref = doc(db, "ptw", id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const data = snap.data() as Omit<PTW, "id">;
+  return { id: snap.id, ...data } as PTW;
 }
 
-export async function listPTW(uid?: string): Promise<PTWWithId[]> {
-  const base = collection(db, "ptw");
-  const q = uid
-    ? query(base, where("requesterUid", "==", uid), orderBy("createdAt", "desc"))
-    : query(base, orderBy("createdAt", "desc"));
-  const snaps = await getDocs(q);
-  return snaps.docs.map(d => ({ id: d.id, ...(d.data() as PTW) }));
+/** Ubah status PTW (butuh izin di Rules) */
+export async function updatePTWStatus(id: string, status: PTWStatus): Promise<void> {
+  const ref = doc(db, "ptw", id);
+  await updateDoc(ref, {
+    status,
+    updatedAt: serverTimestamp(),
+  });
 }
