@@ -14,6 +14,9 @@ import {
   Timestamp,
 } from "firebase/firestore";
 
+/**
+ * Status yang digunakan dalam Permit to Work.
+ */
 export type PTWStatus =
   | "Draft"
   | "Submitted"
@@ -24,6 +27,9 @@ export type PTWStatus =
   | "Expired"
   | "Cancelled";
 
+/**
+ * Struktur utama data Permit to Work.
+ */
 export interface PTW {
   id: string;
   title: string;
@@ -36,7 +42,14 @@ export interface PTW {
   updatedAt: Timestamp | null;
 }
 
-/** Buat PTW baru */
+/**
+ * Alias kompatibilitas untuk versi lama (mis. PTWWithId)
+ */
+export type PTWWithId = PTW;
+
+/**
+ * Buat dokumen PTW baru di Firestore.
+ */
 export async function createPTW(input: {
   title: string;
   location: string;
@@ -59,7 +72,10 @@ export async function createPTW(input: {
   return ref.id;
 }
 
-/** Ambil  PTW milik user login (default). Jika owner ingin lihat semua, set `all=true` dan siapkan rules. */
+/**
+ * Ambil daftar PTW milik user login (default)
+ * atau semua (jika all=true dan user berperan owner/EHS).
+ */
 export async function listPTW(options?: { all?: boolean }): Promise<PTW[]> {
   const user = auth.currentUser;
   if (!user) throw new Error("Unauthenticated");
@@ -70,38 +86,51 @@ export async function listPTW(options?: { all?: boolean }): Promise<PTW[]> {
     : query(col, where("requesterUid", "==", user.uid), orderBy("createdAt", "desc"));
 
   const snap = await getDocs(q);
+
   return snap.docs.map((d) => {
-    const data = d.data() as Omit<PTW, "id">;
+    const data = d.data() as any;
     return {
       id: d.id,
-      title: (data as any).title ?? "",
-      location: (data as any).location ?? "",
-      description: (data as any).description ?? "",
-      status: (data as any).status ?? ("Submitted" as PTWStatus),
-      requesterUid: (data as any).requesterUid ?? "",
-      requesterName: (data as any).requesterName ?? null,
-      createdAt: (data as any).createdAt ?? null,
-      updatedAt: (data as any).updatedAt ?? null,
+      title: data.title ?? "",
+      location: data.location ?? "",
+      description: data.description ?? "",
+      status: (data.status as PTWStatus) ?? "Submitted",
+      requesterUid: data.requesterUid ?? "",
+      requesterName: data.requesterName ?? null,
+      createdAt: data.createdAt ?? null,
+      updatedAt: data.updatedAt ?? null,
     };
   });
 }
 
-/** Ambil detail satu PTW */
+/**
+ * Ambil detail satu PTW berdasarkan ID.
+ */
 export async function getPTW(id: string): Promise<PTW | null> {
   const ref = doc(db, "ptw", id);
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
-  const data = snap.data() as Omit<PTW, "id">;
-  return { id: snap.id, ...data } as PTW;
+  const data = snap.data() as any;
+  return {
+    id: snap.id,
+    title: data.title ?? "",
+    location: data.location ?? "",
+    description: data.description ?? "",
+    status: (data.status as PTWStatus) ?? "Submitted",
+    requesterUid: data.requesterUid ?? "",
+    requesterName: data.requesterName ?? null,
+    createdAt: data.createdAt ?? null,
+    updatedAt: data.updatedAt ?? null,
+  };
 }
 
-/** Ubah status PTW (butuh izin di Rules) */
+/**
+ * Update status PTW (untuk Owner/EHS)
+ */
 export async function updatePTWStatus(id: string, status: PTWStatus): Promise<void> {
   const ref = doc(db, "ptw", id);
   await updateDoc(ref, {
     status,
     updatedAt: serverTimestamp(),
   });
-// --- kompatibilitas untuk halaman lama ---
-export type PTWWithId = PTW;
 }
