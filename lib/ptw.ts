@@ -76,18 +76,21 @@ export async function createPTW(input: {
  * Ambil daftar PTW milik user login (default)
  * atau semua (jika all=true dan user berperan owner/EHS).
  */
+// lib/ptw.ts (hanya fungsi listPTW diubah)
 export async function listPTW(options?: { all?: boolean }): Promise<PTW[]> {
   const user = auth.currentUser;
   if (!user) throw new Error("Unauthenticated");
 
   const col = collection(db, "ptw");
+
+  // Hindari orderBy agar tidak butuh index komposit
   const q = options?.all
-    ? query(col, orderBy("createdAt", "desc"))
-    : query(col, where("requesterUid", "==", user.uid), orderBy("createdAt", "desc"));
+    ? query(col) // (opsional: untuk admin/EHS)
+    : query(col, where("requesterUid", "==", user.uid));
 
   const snap = await getDocs(q);
 
-  return snap.docs.map((d) => {
+  const rows = snap.docs.map((d) => {
     const data = d.data() as any;
     return {
       id: d.id,
@@ -99,8 +102,17 @@ export async function listPTW(options?: { all?: boolean }): Promise<PTW[]> {
       requesterName: data.requesterName ?? null,
       createdAt: data.createdAt ?? null,
       updatedAt: data.updatedAt ?? null,
-    };
+    } as PTW;
   });
+
+  // Urutkan di client berdasarkan createdAt desc
+  rows.sort((a, b) => {
+    const ta = a.createdAt?.seconds ?? 0;
+    const tb = b.createdAt?.seconds ?? 0;
+    return tb - ta;
+  });
+
+  return rows;
 }
 
 /**
