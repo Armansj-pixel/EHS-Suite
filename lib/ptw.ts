@@ -102,4 +102,6 @@ export async function updatePTWStatus(id: string, status: PTWStatus): Promise<vo
     status,
     updatedAt: serverTimestamp(),
   });
+// --- kompatibilitas untuk halaman lama ---
+export type PTWWithId = PTW;
 }
